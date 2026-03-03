@@ -1,0 +1,16 @@
+# Environment and Mathematics
+gymnasium>=0.29.0
+numpy>=1.24.0
+
+# Reinforcement Learning Algorithms
+stable-baselines3>=2.2.0
+
+# Multi-Agent Environments
+pettingzoo>=1.24.0
+supersuit>=3.9.0
+pygame>=2.5.0
+
+# Visualization and Replay Generation
+matplotlib>=3.7.0
+imageio>=2.30.0
+imageio-ffmpeg>=0.4.0
