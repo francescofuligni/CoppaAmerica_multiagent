@@ -7,13 +7,14 @@ from stable_baselines3.common.vec_env import VecMonitor, SubprocVecEnv
 from sailing_env import ImprovedSailingEnv
 from callbacks import SuccessTrackingCallback
 
-def train_model(total_timesteps=500000, n_envs=4, model_path="sailing_ppo_improved"):
+def train_model(total_timesteps=500000, n_envs=4, model_path="models/sailing_ppo_improved"):
     """
     Funzione principale di training con supporto PARALLELISMO.
     n_envs: Numero di ambienti da eseguire in parallelo.
     """
     
     os.makedirs("./sailing_tensorboard", exist_ok=True)
+    os.makedirs(os.path.dirname(model_path), exist_ok=True)
     
     print("="*70)
     print(f"🛥️  SAILING RL - TRAINING (Parallel Envs: {n_envs})")

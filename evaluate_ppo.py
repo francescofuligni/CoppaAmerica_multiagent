@@ -1,11 +1,14 @@
+import os
 import imageio
 from stable_baselines3 import PPO
 
 # Importazioni locali
 from sailing_env import ImprovedSailingEnv
 
-def create_video(model_path="sailing_ppo_improved", filename='sailing_demo.mp4'):
+def create_video(model_path="models/sailing_ppo_improved", filename='videos/sailing_demo.mp4'):
     """Genera video (singolo thread per la visualizzazione grafica)"""
+    
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
     
     print("="*70)
     print("🎬 SAILING VIDEO GENERATION")
