@@ -29,11 +29,19 @@ class ImprovedSailingEnv(ParallelEnv):
         self.possible_agents = ["boat_0"]
         self.agents = self.possible_agents[:]
 
+        # Timone reale: 7 posizioni discrete da -35° a +35°
+        self.rudder_angles_map = np.radians([-35, -25, -15, 0, 15, 25, 35])
+        self.max_rudder_angle = np.radians(35)
+        # Massima virata per step a velocità piena con timone a fondo
+        self.max_turn_per_step = np.radians(25)
+
+        # Obs: (x, y, speed, heading, wind_dir, wind_speed, dist, angle_to_target, rudder)
         self.observation_spaces = {agent: spaces.Box(
-            low=0.0, high=1.0, shape=(8,), dtype=np.float32
+            low=0.0, high=1.0, shape=(9,), dtype=np.float32
         ) for agent in self.possible_agents}
-        
-        self.action_spaces = {agent: spaces.Discrete(4) 
+
+        # 7 posizioni timone: 0=-35°, 1=-25°, 2=-15°, 3=centrato, 4=+15°, 5=+25°, 6=+35°
+        self.action_spaces = {agent: spaces.Discrete(7)
                               for agent in self.possible_agents}
         
         self.state = {}
@@ -82,7 +90,8 @@ class ImprovedSailingEnv(ParallelEnv):
                 'x': self.np_random.uniform(40, 120),
                 'y': self.np_random.uniform(40, 120),
                 'speed': 0.0,
-                'heading': self.np_random.uniform(0, 2*np.pi)
+                'heading': self.np_random.uniform(0, 2*np.pi),
+                'rudder_angle': 0.0,  # radianti, range [-max_rudder, +max_rudder]
             }
             
             self.target[agent] = np.array([
@@ -119,6 +128,8 @@ class ImprovedSailingEnv(ParallelEnv):
         local_wind_dir, local_wind_speed = self.wind_field.get_local_wind(
             self.state[agent]['x'], self.state[agent]['y']
         )
+        # Angolo timone normalizzato in [0, 1]: 0=tutto-sinistra, 0.5=centrato, 1=tutto-destra
+        rudder_norm = (self.state[agent]['rudder_angle'] + self.max_rudder_angle) / (2 * self.max_rudder_angle)
         obs = np.array([
             self.state[agent]['x'] / self.field_size,
             self.state[agent]['y'] / self.field_size,
@@ -127,7 +138,8 @@ class ImprovedSailingEnv(ParallelEnv):
             local_wind_dir / (2 * np.pi),
             local_wind_speed / self.max_wind,
             dist_to_target / (self.field_size * np.sqrt(2)),
-            angle_to_target / (2 * np.pi)
+            angle_to_target / (2 * np.pi),
+            float(rudder_norm),
         ], dtype=np.float32)
         
         return obs
@@ -149,12 +161,18 @@ class ImprovedSailingEnv(ParallelEnv):
         for agent, action in actions.items():
             pos = np.array([self.state[agent]['x'], self.state[agent]['y']])
             prev_dist = np.linalg.norm(pos - self.target[agent])
-            
-            if action == 0: self.state[agent]['heading'] -= np.radians(15)
-            elif action == 2: self.state[agent]['heading'] += np.radians(15)
-            elif action == 3: self.state[agent]['heading'] += np.pi
-                
-            self.state[agent]['heading'] = self._normalize_angle(self.state[agent]['heading'])
+
+            # --- Fisica timone reale ---
+            # 1. Imposta l'angolo del timone dall'azione scelta
+            self.state[agent]['rudder_angle'] = float(self.rudder_angles_map[int(action)])
+
+            # 2. Velocità di virata proporzionale a timone × velocità corrente
+            #    A velocità zero la barca non sterza (comportamento realistico)
+            speed_factor = self.state[agent]['speed'] / self.max_speed
+            turn_rate = (self.state[agent]['rudder_angle'] / self.max_rudder_angle) * speed_factor * self.max_turn_per_step
+            self.state[agent]['heading'] = self._normalize_angle(
+                self.state[agent]['heading'] + turn_rate * self.dt
+            )
 
             local_wind_dir, local_wind_speed = self.wind_field.get_local_wind(
                 self.state[agent]['x'], self.state[agent]['y']
@@ -274,18 +292,41 @@ class ImprovedSailingEnv(ParallelEnv):
                 ax.plot(traj[:, 0], traj[:, 1], '-', color=colors[idx%len(colors)], alpha=0.5, linewidth=2)
                 
             if agent in self.state:
+                bx = self.state[agent]['x']
+                by = self.state[agent]['y']
+                hdg = self.state[agent]['heading']
                 boat_size = 15
+
                 boat_points = np.array([[boat_size, 0], [-boat_size/2, boat_size/2], [-boat_size/2, -boat_size/2]])
                 rotation_matrix = np.array([
-                    [np.cos(self.state[agent]['heading']), -np.sin(self.state[agent]['heading'])],
-                    [np.sin(self.state[agent]['heading']), np.cos(self.state[agent]['heading'])]
+                    [np.cos(hdg), -np.sin(hdg)],
+                    [np.sin(hdg),  np.cos(hdg)]
                 ])
                 boat_points = boat_points @ rotation_matrix.T
-                boat_points += np.array([self.state[agent]['x'], self.state[agent]['y']])
-                
-                boat = patches.Polygon(boat_points, closed=True, color='green', 
+                boat_points += np.array([bx, by])
+
+                boat = patches.Polygon(boat_points, closed=True, color='green',
                                       edgecolor='darkgreen', linewidth=2)
                 ax.add_patch(boat)
+
+                # --- Indicatore timone (linea alla poppa) ---
+                rudder_angle = self.state[agent].get('rudder_angle', 0.0)
+                stern_x = bx - boat_size * 0.6 * np.cos(hdg)
+                stern_y = by - boat_size * 0.6 * np.sin(hdg)
+                rudder_dir = hdg + np.pi + rudder_angle   # punta all'indietro + deflessione
+                rudder_len = 11
+                rudder_end_x = stern_x + rudder_len * np.cos(rudder_dir)
+                rudder_end_y = stern_y + rudder_len * np.sin(rudder_dir)
+
+                rudder_color = 'red' if abs(rudder_angle) > np.radians(20) else 'darkorange'
+                ax.plot([stern_x, rudder_end_x], [stern_y, rudder_end_y],
+                        color=rudder_color, linewidth=3, solid_capstyle='round')
+
+                # Etichetta angolo timone in gradi
+                rudder_deg = int(np.degrees(rudder_angle))
+                ax.text(bx + 18, by + 18,
+                        f"{rudder_deg:+d}°",
+                        fontsize=7, color=rudder_color, fontweight='bold')
             idx += 1
         
         ref_agent = self.possible_agents[0]
