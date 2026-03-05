@@ -1,7 +1,17 @@
 import os
+import warnings
 import imageio
 from stable_baselines3 import PPO
 import supersuit as ss
+
+# Sopprimi il warning di SuperSuit sul render(mode=...) — bug noto della libreria,
+# non modificabile dal nostro codice (triggera ad ogni frame del video)
+warnings.filterwarnings(
+    'ignore',
+    message="PettingZoo environments do not take the `render\\(mode\\)` argument",
+    category=UserWarning,
+    module='supersuit'
+)
 
 # Importazioni locali
 from sailing_env import ImprovedSailingEnv
