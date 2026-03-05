@@ -34,6 +34,8 @@ class ImprovedSailingEnv(ParallelEnv):
         self.max_rudder_angle = np.radians(35)
         # Massima virata per step a velocità piena con timone a fondo
         self.max_turn_per_step = np.radians(25)
+        # Virata minima garantita anche a velocità zero (evita deadlock no-go zone)
+        self.min_turn_factor = 0.12
 
         # Obs: (x, y, speed, heading, wind_dir, wind_speed, dist, angle_to_target, rudder)
         self.observation_spaces = {agent: spaces.Box(
@@ -114,6 +116,14 @@ class ImprovedSailingEnv(ParallelEnv):
         base_dir = target_angle + np.pi / 2 + self.np_random.uniform(-np.pi / 6, np.pi / 6)
         self.wind_field.reset(self.np_random, base_direction=base_dir)
 
+        # Inizializza heading su beam reach (±90° dal vento) + piccolo rumore
+        # Garantisce velocità non-zero fin dal primo step, evita il deadlock no-go zone
+        for agent in self.possible_agents:
+            beam_reach = base_dir + np.pi / 2 * float(self.np_random.choice([-1, 1]))
+            self.state[agent]['heading'] = self._normalize_angle(
+                beam_reach + self.np_random.uniform(-np.radians(20), np.radians(20))
+            )
+
         observations = {a: self._get_obs(a) for a in self.agents}
         infos = {a: {} for a in self.agents}
         
@@ -166,10 +176,11 @@ class ImprovedSailingEnv(ParallelEnv):
             # 1. Imposta l'angolo del timone dall'azione scelta
             self.state[agent]['rudder_angle'] = float(self.rudder_angles_map[int(action)])
 
-            # 2. Velocità di virata proporzionale a timone × velocità corrente
-            #    A velocità zero la barca non sterza (comportamento realistico)
+            # 2. Velocità di virata: componente proporzionale alla velocità + minima garantita
+            #    min_turn_factor assicura che la barca possa sempre uscire dalla no-go zone
             speed_factor = self.state[agent]['speed'] / self.max_speed
-            turn_rate = (self.state[agent]['rudder_angle'] / self.max_rudder_angle) * speed_factor * self.max_turn_per_step
+            effective_factor = self.min_turn_factor + (1.0 - self.min_turn_factor) * speed_factor
+            turn_rate = (self.state[agent]['rudder_angle'] / self.max_rudder_angle) * effective_factor * self.max_turn_per_step
             self.state[agent]['heading'] = self._normalize_angle(
                 self.state[agent]['heading'] + turn_rate * self.dt
             )
@@ -305,8 +316,8 @@ class ImprovedSailingEnv(ParallelEnv):
                 boat_points = boat_points @ rotation_matrix.T
                 boat_points += np.array([bx, by])
 
-                boat = patches.Polygon(boat_points, closed=True, color='green',
-                                      edgecolor='darkgreen', linewidth=2)
+                boat = patches.Polygon(boat_points, closed=True,
+                                      facecolor='green', edgecolor='darkgreen', linewidth=2)
                 ax.add_patch(boat)
 
                 # --- Indicatore timone (linea alla poppa) ---
