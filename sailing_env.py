@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from typing import Optional
 
+from wind_model import WindField
+
 class ImprovedSailingEnv(ParallelEnv):
     """
     Ambiente di navigazione a vela migliorato, compatibile con PettingZoo Parallel API.
@@ -36,8 +38,7 @@ class ImprovedSailingEnv(ParallelEnv):
         
         self.state = {}
         self.target = {}
-        self.wind_direction = None
-        self.wind_speed = None
+        self.wind_field = WindField(field_size=field_size)
         self.step_count = 0
         self.trajectory = {}
         self.previous_distance = {}
@@ -75,9 +76,7 @@ class ImprovedSailingEnv(ParallelEnv):
              
         self.agents = self.possible_agents[:]
         self.step_count = 0
-        
-        self.wind_speed = self.np_random.uniform(10, 18)
-        
+
         for agent in self.possible_agents:
             self.state[agent] = {
                 'x': self.np_random.uniform(40, 120),
@@ -97,14 +96,15 @@ class ImprovedSailingEnv(ParallelEnv):
             self.previous_distance[agent] = np.linalg.norm(pos - self.target[agent])
             self.best_distance[agent] = self.previous_distance[agent]
         
-        # Inizializziamo il vento basato sul primo agente per semplicità
+        # Inizializziamo il vento con direzione orientata verso il target del primo agente
         ref_agent = self.possible_agents[0]
         target_angle = np.arctan2(
             self.target[ref_agent][1] - self.state[ref_agent]['y'],
             self.target[ref_agent][0] - self.state[ref_agent]['x']
         )
-        self.wind_direction = target_angle + np.pi/2 + self.np_random.uniform(-np.pi/6, np.pi/6)
-        
+        base_dir = target_angle + np.pi / 2 + self.np_random.uniform(-np.pi / 6, np.pi / 6)
+        self.wind_field.reset(self.np_random, base_direction=base_dir)
+
         observations = {a: self._get_obs(a) for a in self.agents}
         infos = {a: {} for a in self.agents}
         
@@ -116,13 +116,16 @@ class ImprovedSailingEnv(ParallelEnv):
         angle_to_target = np.arctan2(self.target[agent][1] - pos[1], self.target[agent][0] - pos[0])
         angle_to_target = self._normalize_angle(angle_to_target)
         
+        local_wind_dir, local_wind_speed = self.wind_field.get_local_wind(
+            self.state[agent]['x'], self.state[agent]['y']
+        )
         obs = np.array([
             self.state[agent]['x'] / self.field_size,
             self.state[agent]['y'] / self.field_size,
             self.state[agent]['speed'] / self.max_speed,
             self.state[agent]['heading'] / (2 * np.pi),
-            self.wind_direction / (2 * np.pi),
-            self.wind_speed / self.max_wind,
+            local_wind_dir / (2 * np.pi),
+            local_wind_speed / self.max_wind,
             dist_to_target / (self.field_size * np.sqrt(2)),
             angle_to_target / (2 * np.pi)
         ], dtype=np.float32)
@@ -135,7 +138,8 @@ class ImprovedSailingEnv(ParallelEnv):
             return {}, {}, {}, {}, {}
 
         self.step_count += 1
-        
+        self.wind_field.step()  # aggiorna il campo di vento ad ogni step
+
         observations = {}
         rewards = {}
         terminations = {}
@@ -151,9 +155,12 @@ class ImprovedSailingEnv(ParallelEnv):
             elif action == 3: self.state[agent]['heading'] += np.pi
                 
             self.state[agent]['heading'] = self._normalize_angle(self.state[agent]['heading'])
-            
-            apparent_wind_angle = self.wind_direction - self.state[agent]['heading']
-            self.state[agent]['speed'] = self._get_polar_speed(apparent_wind_angle, self.wind_speed)
+
+            local_wind_dir, local_wind_speed = self.wind_field.get_local_wind(
+                self.state[agent]['x'], self.state[agent]['y']
+            )
+            apparent_wind_angle = local_wind_dir - self.state[agent]['heading']
+            self.state[agent]['speed'] = self._get_polar_speed(apparent_wind_angle, local_wind_speed)
             
             displacement = self.state[agent]['speed'] * 0.514 * self.dt
             self.state[agent]['x'] += displacement * np.cos(self.state[agent]['heading'])
@@ -241,7 +248,18 @@ class ImprovedSailingEnv(ParallelEnv):
         ax.set_ylim(0, self.field_size)
         ax.set_aspect('equal')
         ax.grid(True, alpha=0.3)
-        
+
+        # --- Frecce vento (griglia 8x8) ---
+        xs, ys, us, vs = self.wind_field.get_grid_arrows(n_arrows=8)
+        speeds = np.sqrt(us**2 + vs**2)
+        ax.quiver(
+            xs, ys, us, vs,
+            speeds,
+            cmap='Blues', alpha=0.55,
+            scale=220, width=0.003,
+            headwidth=4, headlength=5,
+        )
+
         for agent in self.possible_agents:
             if agent in self.target:
                 target_circle = plt.Circle(self.target[agent], self.target_radius, 
@@ -273,10 +291,53 @@ class ImprovedSailingEnv(ParallelEnv):
         ref_agent = self.possible_agents[0]
         if ref_agent in self.state:
             dist = np.linalg.norm(np.array([self.state[ref_agent]['x'], self.state[ref_agent]['y']]) - self.target[ref_agent])
+
+            # Vento locale nella posizione della barca
+            local_wd, local_ws = self.wind_field.get_local_wind(
+                self.state[ref_agent]['x'], self.state[ref_agent]['y']
+            )
+            wind_deg = np.degrees(local_wd) % 360
+
             ax.set_title(
-                f"Step: {self.step_count} | Speed: {self.state[ref_agent]['speed']:.1f} kts | "
+                f"Step: {self.step_count} | Boat speed: {self.state[ref_agent]['speed']:.1f} kts | "
                 f"Distance: {dist:.0f}m (Best: {self.best_distance[ref_agent]:.0f}m)",
                 fontsize=10, weight='bold'
+            )
+
+            # --- Box info vento (angolo in alto a sinistra) ---
+            wind_text = (
+                f"Wind (base)\n"
+                f"Dir: {np.degrees(self.wind_field.base_direction) % 360:.0f}°\n"
+                f"Speed: {self.wind_field.base_speed:.1f} kts\n"
+                f"\nWind (local @ boat)\n"
+                f"Dir: {wind_deg:.0f}°\n"
+                f"Speed: {local_ws:.1f} kts"
+            )
+            ax.text(
+                0.02, 0.98, wind_text,
+                transform=ax.transAxes,
+                fontsize=8, verticalalignment='top',
+                bbox=dict(boxstyle='round,pad=0.4', facecolor='lightyellow', alpha=0.85, edgecolor='gray'),
+                family='monospace'
+            )
+
+            # --- Rosa dei venti compatta (angolo in alto a destra) ---
+            inset_ax = fig.add_axes([0.78, 0.78, 0.16, 0.16], polar=True)
+            inset_ax.set_theta_zero_location('N')
+            inset_ax.set_theta_direction(-1)
+            inset_ax.set_rticks([])
+            inset_ax.set_xticks(np.linspace(0, 2 * np.pi, 8, endpoint=False))
+            inset_ax.set_xticklabels(['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'], fontsize=6)
+            inset_ax.set_title('Wind', fontsize=7, pad=2)
+            # Freccia vento base (blu)
+            inset_ax.annotate(
+                '', xy=(self.wind_field.base_direction, 0.8), xytext=(0, 0),
+                arrowprops=dict(arrowstyle='->', color='steelblue', lw=1.8)
+            )
+            # Freccia vento locale (arancione tratteggiata)
+            inset_ax.annotate(
+                '', xy=(local_wd, 0.65), xytext=(0, 0),
+                arrowprops=dict(arrowstyle='->', color='darkorange', lw=1.4, linestyle='dashed')
             )
         
         fig.canvas.draw()
