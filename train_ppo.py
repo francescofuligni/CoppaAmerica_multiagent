@@ -7,7 +7,7 @@ import supersuit as ss
 from sailing_env import ImprovedSailingEnv
 from callbacks import SuccessTrackingCallback
 
-def train_model(total_timesteps=500000, n_envs=12, model_path="models/sailing_ppo_improved"):
+def train_model(total_timesteps=500000, n_envs=4, model_path="models/sailing_ppo_improved"):
     """
     Funzione principale di training con supporto PARALLELISMO per PettingZoo tramite SuperSuit.
     n_envs: Numero di ambienti da eseguire in parallelo.

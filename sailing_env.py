@@ -31,8 +31,9 @@ class ImprovedSailingEnv(ParallelEnv):
             low=0.0, high=1.0, shape=(8,), dtype=np.float32
         ) for agent in self.possible_agents}
         
-        self.action_spaces = {agent: spaces.Discrete(4) 
-                              for agent in self.possible_agents}
+        self.action_spaces = {agent: spaces.Box(
+            low=-1.0, high=1.0, shape=(1,), dtype=np.float32
+        ) for agent in self.possible_agents}
         
         self.state = {}
         self.target = {}
@@ -146,14 +147,22 @@ class ImprovedSailingEnv(ParallelEnv):
             pos = np.array([self.state[agent]['x'], self.state[agent]['y']])
             prev_dist = np.linalg.norm(pos - self.target[agent])
             
-            if action == 0: self.state[agent]['heading'] -= np.radians(15)
-            elif action == 2: self.state[agent]['heading'] += np.radians(15)
-            elif action == 3: self.state[agent]['heading'] += np.pi
-                
+            # AZIONE CONTINUA (Timone progressivo)
+            # action[0] è un float tra -1.0 e 1.0. Lo usiamo come percentuale di virata massima (25 gradi).
+            turn_rate = action[0] * np.radians(25)
+            
+            # Frenata causata da virata brusca (fondamentale per insegnare a non zigzagare a caso)
+            brake_factor = min(1.0, abs(action[0]) * 0.5)
+            self.state[agent]['speed'] *= (1.0 - brake_factor * 0.2)
+            
+            self.state[agent]['heading'] += turn_rate
             self.state[agent]['heading'] = self._normalize_angle(self.state[agent]['heading'])
             
             apparent_wind_angle = self.wind_direction - self.state[agent]['heading']
-            self.state[agent]['speed'] = self._get_polar_speed(apparent_wind_angle, self.wind_speed)
+            target_speed = self._get_polar_speed(apparent_wind_angle, self.wind_speed)
+            
+            # Inerzia
+            self.state[agent]['speed'] = self.state[agent]['speed'] * 0.85 + target_speed * 0.15
             
             displacement = self.state[agent]['speed'] * 0.514 * self.dt
             self.state[agent]['x'] += displacement * np.cos(self.state[agent]['heading'])
@@ -170,6 +179,10 @@ class ImprovedSailingEnv(ParallelEnv):
             
             distance_delta = prev_dist - dist_to_target
             reward += distance_delta * 2.0
+            
+            # Penalità Timone (scoraggiare virate aggressive)
+            turn_penalty = abs(action[0]) * 0.1
+            reward -= turn_penalty
             
             if dist_to_target < 200: reward += 10.0
             if dist_to_target < 150: reward += 15.0
