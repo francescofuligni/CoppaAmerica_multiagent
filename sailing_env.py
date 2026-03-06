@@ -2,6 +2,8 @@ import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 from pettingzoo.utils.env import ParallelEnv
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from typing import Optional
@@ -19,10 +21,10 @@ class ImprovedSailingEnv(ParallelEnv):
         
         self.field_size = field_size
         self.max_speed = 15.0
-        self.max_wind = 25.0
+        self.max_wind = 30.0
         self.target_radius = 50.0
         self.dt = 1.0
-        self.max_steps = 250
+        self.max_steps = 400
         self.render_mode = render_mode
 
         # Configurazione PettingZoo
@@ -36,9 +38,9 @@ class ImprovedSailingEnv(ParallelEnv):
         # Inerzia velocità: smooth tra vecchia e target (idea del collega)
         self.speed_inertia = 0.85
 
-        # Obs: (x, y, speed, heading, wind_dir, wind_speed, dist, angle_to_target, rudder)
+        # Obs: (x, y, speed, sin_h, cos_h, sin_aw, cos_aw, wind_speed, dist, sin_rb, cos_rb, rudder)
         self.observation_spaces = {agent: spaces.Box(
-            low=0.0, high=1.0, shape=(9,), dtype=np.float32
+            low=-1.0, high=1.0, shape=(12,), dtype=np.float32
         ) for agent in self.possible_agents}
 
         # Timone continuo: float in [-1, 1]
@@ -93,7 +95,7 @@ class ImprovedSailingEnv(ParallelEnv):
                 'y': self.np_random.uniform(40, 120),
                 'speed': 0.0,
                 'heading': self.np_random.uniform(0, 2*np.pi),
-                'rudder_angle': 0.0,  # radianti, range [-max_rudder, +max_rudder]
+                'rudder_angle': 0.0,  # raw input [-1, 1]
             }
             
             self.target[agent] = np.array([
@@ -107,13 +109,12 @@ class ImprovedSailingEnv(ParallelEnv):
             self.previous_distance[agent] = np.linalg.norm(pos - self.target[agent])
             self.best_distance[agent] = self.previous_distance[agent]
         
-        # Inizializziamo il vento con direzione orientata verso il target del primo agente
-        ref_agent = self.possible_agents[0]
-        target_angle = np.arctan2(
-            self.target[ref_agent][1] - self.state[ref_agent]['y'],
-            self.target[ref_agent][0] - self.state[ref_agent]['x']
-        )
-        base_dir = target_angle + np.pi / 2 + self.np_random.uniform(-np.pi / 6, np.pi / 6)
+        # Inizializziamo il vento: direzione completamente casuale [0, 2π]
+        # per esporre l'agente a tutte le condizioni di vento in training
+        if options and 'wind_direction' in options:
+            base_dir = float(options['wind_direction'])
+        else:
+            base_dir = float(self.np_random.uniform(0, 2 * np.pi))
         self.wind_field.reset(self.np_random, base_direction=base_dir)
 
         # Inizializza heading su beam reach (±90° dal vento) + piccolo rumore
@@ -132,27 +133,33 @@ class ImprovedSailingEnv(ParallelEnv):
     def _get_obs(self, agent):
         pos = np.array([self.state[agent]['x'], self.state[agent]['y']])
         dist_to_target = np.linalg.norm(pos - self.target[agent])
-        angle_to_target = np.arctan2(self.target[agent][1] - pos[1], self.target[agent][0] - pos[0])
-        angle_to_target = self._normalize_angle(angle_to_target)
+        bearing_to_target = np.arctan2(
+            self.target[agent][1] - pos[1], self.target[agent][0] - pos[0]
+        )
         
         local_wind_dir, local_wind_speed = self.wind_field.get_local_wind(
             self.state[agent]['x'], self.state[agent]['y']
         )
-        # Angolo timone normalizzato in [0, 1]: 0=tutto-sinistra, 0.5=centrato, 1=tutto-destra
-        rudder_norm = (self.state[agent]['rudder_angle'] + 1.0) / 2.0
+        
+        heading = self.state[agent]['heading']
+        # Angolo relativo: target rispetto alla prua
+        rel_bearing = bearing_to_target - heading
+        # Angolo apparente del vento rispetto alla prua
+        apparent_wind = local_wind_dir - heading
+        
         obs = np.array([
-            self.state[agent]['x'] / self.field_size,
-            self.state[agent]['y'] / self.field_size,
-            self.state[agent]['speed'] / self.max_speed,
-            self.state[agent]['heading'] / (2 * np.pi),
-            local_wind_dir / (2 * np.pi),
-            local_wind_speed / self.max_wind,
-            dist_to_target / (self.field_size * np.sqrt(2)),
-            angle_to_target / (2 * np.pi),
-            float(rudder_norm),
+            self.state[agent]['x'] / self.field_size,            # [0, 1]
+            self.state[agent]['y'] / self.field_size,            # [0, 1]
+            self.state[agent]['speed'] / self.max_speed,         # [0, 1]
+            np.sin(heading), np.cos(heading),                    # [-1, 1]
+            np.sin(apparent_wind), np.cos(apparent_wind),        # [-1, 1]
+            local_wind_speed / self.max_wind,                    # [0, 1]
+            dist_to_target / (self.field_size * np.sqrt(2)),     # [0, 1]
+            np.sin(rel_bearing), np.cos(rel_bearing),            # [-1, 1]
+            float(self.state[agent]['rudder_angle']),             # [-1, 1]
         ], dtype=np.float32)
         
-        return obs
+        return np.clip(obs, -1.0, 1.0)
 
     def step(self, actions):
         if not actions:
@@ -210,57 +217,42 @@ class ImprovedSailingEnv(ParallelEnv):
             terminated = False
             truncated = False
             
+            # 1. Progresso verso target (segnale principale)
             distance_delta = prev_dist - dist_to_target
-            reward += distance_delta * 2.0
+            reward += distance_delta * 5.0
 
-            # Penalità timone (dal collega): scoraggia virate aggressive/zigzag
-            turn_penalty = abs(self.state[agent]['rudder_angle']) * 0.1
-            reward -= turn_penalty
+            # 2. Costo per step (urgenza)
+            reward -= 0.3
 
-            if dist_to_target < 200: reward += 10.0
-            if dist_to_target < 150: reward += 15.0
-            if dist_to_target < 100: reward += 25.0
-            if dist_to_target < 75:  reward += 40.0
-            if dist_to_target < 60:  reward += 60.0
-                
-            if dist_to_target > 100: reward -= 0.2
-            elif dist_to_target > 60: reward -= 0.1
-            else: reward -= 0.05
-                
-            if distance_delta > 0: reward += self.state[agent]['speed'] * 0.15
-                
-            angle_to_target = np.arctan2(self.target[agent][1] - pos[1], self.target[agent][0] - pos[0])
-            heading_error = abs(self._normalize_angle(angle_to_target - self.state[agent]['heading']))
-            if heading_error > np.pi: heading_error = 2 * np.pi - heading_error
-            heading_alignment = 1.0 - (heading_error / np.pi)
-            
-            proximity_factor = 1.0
-            if dist_to_target < 100: proximity_factor = 2.0
-            if dist_to_target < 60:  proximity_factor = 3.0
-            reward += heading_alignment * 1.5 * proximity_factor
-            
+            # 3. Penalità timone (scoraggia zigzag)
+            reward -= abs(rudder_input) * 0.1
+
+            # 4. Bonus velocità quando ci si avvicina
+            if distance_delta > 0:
+                reward += self.state[agent]['speed'] * 0.1
+
+            # 5. Aggiorna record di avvicinamento
             if dist_to_target < self.best_distance[agent]:
-                improvement = self.best_distance[agent] - dist_to_target
-                reward += improvement * 1.0
                 self.best_distance[agent] = dist_to_target
-                
+
+            # 6. Successo: target raggiunto
             if dist_to_target < self.target_radius:
-                efficiency_bonus = max(0, 250 - self.step_count) * 2
-                reward += 2000.0 + efficiency_bonus
+                efficiency = max(0, self.max_steps - self.step_count) / self.max_steps
+                reward += 1000.0 + efficiency * 500.0
                 terminated = True
-                
-            if (self.state[agent]['x'] < 0 or self.state[agent]['x'] > self.field_size or
-                self.state[agent]['y'] < 0 or self.state[agent]['y'] > self.field_size):
-                reward -= 100.0
+
+            # 7. Fuori campo
+            elif (self.state[agent]['x'] < 0 or self.state[agent]['x'] > self.field_size or
+                  self.state[agent]['y'] < 0 or self.state[agent]['y'] > self.field_size):
+                reward -= 150.0
                 terminated = True
-                
-            if dist_to_target > prev_dist + 25: reward -= 5.0
-                
+
+            # 8. Tempo scaduto: credito parziale basato sul progresso
             if self.step_count >= self.max_steps:
                 truncated = True
-                if self.best_distance[agent] < 60: reward += 200.0
-                elif self.best_distance[agent] < 100: reward += 100.0
-                elif self.best_distance[agent] < 150: reward += 50.0
+                progress = 1.0 - (self.best_distance[agent] / max(self.previous_distance[agent], 1.0))
+                if progress > 0:
+                    reward += progress * 200.0
                     
             observations[agent] = self._get_obs(agent)
             rewards[agent] = reward
@@ -358,7 +350,7 @@ class ImprovedSailingEnv(ParallelEnv):
             local_wd, local_ws = self.wind_field.get_local_wind(
                 self.state[ref_agent]['x'], self.state[ref_agent]['y']
             )
-            wind_deg = np.degrees(local_wd) % 360
+            wind_deg = (90 - np.degrees(local_wd)) % 360
 
             ax.set_title(
                 f"Step: {self.step_count} | Boat speed: {self.state[ref_agent]['speed']:.1f} kts | "
@@ -369,7 +361,7 @@ class ImprovedSailingEnv(ParallelEnv):
             # --- Box info vento (angolo in alto a sinistra) ---
             wind_text = (
                 f"Wind (base)\n"
-                f"Dir: {np.degrees(self.wind_field.base_direction) % 360:.0f}°\n"
+                f"Dir: {(90 - np.degrees(self.wind_field.base_direction)) % 360:.0f}\u00b0\n"
                 f"Speed: {self.wind_field.base_speed:.1f} kts\n"
                 f"\nWind (local @ boat)\n"
                 f"Dir: {wind_deg:.0f}°\n"
@@ -391,14 +383,17 @@ class ImprovedSailingEnv(ParallelEnv):
             inset_ax.set_xticks(np.linspace(0, 2 * np.pi, 8, endpoint=False))
             inset_ax.set_xticklabels(['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'], fontsize=6)
             inset_ax.set_title('Wind', fontsize=7, pad=2)
+            # Converti da convenzione math (0=Est, CCW) a bussola (0=Nord, CW)
+            compass_base = np.pi / 2 - self.wind_field.base_direction
+            compass_local = np.pi / 2 - local_wd
             # Freccia vento base (blu)
             inset_ax.annotate(
-                '', xy=(self.wind_field.base_direction, 0.8), xytext=(0, 0),
+                '', xy=(compass_base, 0.8), xytext=(0, 0),
                 arrowprops=dict(arrowstyle='->', color='steelblue', lw=1.8)
             )
             # Freccia vento locale (arancione tratteggiata)
             inset_ax.annotate(
-                '', xy=(local_wd, 0.65), xytext=(0, 0),
+                '', xy=(compass_local, 0.65), xytext=(0, 0),
                 arrowprops=dict(arrowstyle='->', color='darkorange', lw=1.4, linestyle='dashed')
             )
         
