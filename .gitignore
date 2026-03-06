@@ -1,3 +1,8 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
 # Environments
 .venv/
 /.venv
@@ -14,16 +19,25 @@ __pycache__/
 # Jupyter Notebook
 .ipynb_checkpoints
 
+# Project Specific Output
+models/
+videos/
+sailing_tensorboard/
+logs/
+checkpoints/
+*.zip
+*.mp4
+*.gif
+*.avi
+
+# IDE
+.idea/
+*.swp
+*.swo
+
 # VSCode
 .vscode/
 !.vscode/settings.json
-
-# Project Specific Output
-# models/  # Rimosso per permettere il push dei modelli
-videos/
-sailing_tensorboard/
-# *.zip    # Rimosso per permettere il push dei modelli (.zip)
-*.mp4
 
 # OS generated files
 .DS_Store
