@@ -19,10 +19,10 @@ __pycache__/
 !.vscode/settings.json
 
 # Project Specific Output
-models/
+# models/  # Rimosso per permettere il push dei modelli
 videos/
 sailing_tensorboard/
-*.zip
+# *.zip    # Rimosso per permettere il push dei modelli (.zip)
 *.mp4
 
 # OS generated files
