@@ -9,11 +9,12 @@ import argparse
 
 # Importazioni dai nostri moduli separati
 from train_ppo import train_model
-from evaluate_ppo import create_video
+from evaluate_ppo import create_video, create_multi_video
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Gestore Addestramento Barca a Vela")
     parser.add_argument("--train", action="store_true", help="Forza l'avvio del training")
+    parser.add_argument("--test-multi", action="store_true", help="Genera 4 video con direzioni di vento differenti")
     parser.add_argument("--steps", type=int, default=500000, help="Passi di training totali")
     parser.add_argument("--n-envs", type=int, default=12, help="Numero di ambienti/processi paralleli")
     parser.add_argument("--model-path", type=str, default="models/sailing_ppo_improved", help="Nome file del modello")
@@ -28,5 +29,8 @@ if __name__ == "__main__":
     else:
         print(f"Model '{args.model_path}.zip' found. Skipping training.")
         
-    # Crea sempre il video alla fine
-    create_video(model_path=args.model_path, filename=args.video_file)
+    # Esegui la valutazione finale
+    if args.test_multi:
+        create_multi_video(model_path=args.model_path)
+    else:
+        create_video(model_path=args.model_path, filename=args.video_file)
