@@ -5,7 +5,7 @@ import supersuit as ss
 
 # Importazioni Locali
 from sailing_env import ImprovedSailingEnv
-from callbacks import MultiAgentSuccessTrackingCallback
+from callbacks import SuccessTrackingCallback
 
 def train_model(total_timesteps=500000, n_envs=4, model_path="models/sailing_ppo_improved"):
     """
@@ -52,7 +52,7 @@ def train_model(total_timesteps=500000, n_envs=4, model_path="models/sailing_ppo
     )
     
     # 3. Setup Callback
-    callback = MultiAgentSuccessTrackingCallback(verbose=1, check_freq=10000 // n_envs)
+    callback = SuccessTrackingCallback(verbose=1, check_freq=10000 // n_envs)
     
     # 4. Avvio Training
     print(f"\n4. Training for {total_timesteps} steps...")
