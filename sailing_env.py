@@ -28,7 +28,7 @@ class ImprovedSailingEnv(ParallelEnv):
         self.render_mode = render_mode
 
         # Ora due barche
-        self.possible_agents = ["boat_0", "boat_1"]
+        self.possible_agents = ["red_boat", "blue_boat"]
         self.agents = self.possible_agents[:]
 
         # Timone continuo
@@ -270,7 +270,8 @@ class ImprovedSailingEnv(ParallelEnv):
         if self.fig is None or self.ax is None:
             self.fig, self.ax = plt.subplots(figsize=(8,8))
 
-        self.ax.clear()
+        self.fig.clf() # Fully clear the figure to avoid frame overlapping
+        self.ax = self.fig.add_subplot(111)
         self.ax.set_xlim(0, self.field_size)
         self.ax.set_ylim(0, self.field_size)
         self.ax.set_aspect('equal')
@@ -283,22 +284,24 @@ class ImprovedSailingEnv(ParallelEnv):
         self.ax.quiver(xs, ys, us, vs, speeds, cmap='Blues', alpha=0.55,
                     scale=220, width=0.003, headwidth=4, headlength=5)
 
-        colors = ['red', 'blue', 'green', 'orange']
+        colors_map = {'red_boat': 'red', 'blue_boat': 'blue'}
 
         # --- Target (solo uno) ---
         if self.possible_agents:
             first_agent = self.possible_agents[0]
             if first_agent in self.target:
                 circle = plt.Circle(self.target[first_agent], self.target_radius,
-                                    color='red', alpha=0.3)
+                                    color='green', alpha=0.3)
                 self.ax.add_patch(circle)
 
         # --- Traiettorie e barche ---
         for idx, agent in enumerate(self.possible_agents):
+            agent_color = colors_map.get(agent, 'black')
+            
             # Traiettoria
             if agent in self.trajectory and len(self.trajectory[agent]) > 1:
                 traj = np.array(self.trajectory[agent])
-                self.ax.plot(traj[:,0], traj[:,1], '-', color=colors[idx%len(colors)],
+                self.ax.plot(traj[:,0], traj[:,1], '-', color=agent_color,
                             alpha=0.5, linewidth=2)
 
             # Barca
@@ -310,7 +313,8 @@ class ImprovedSailingEnv(ParallelEnv):
                 rot = np.array([[np.cos(hdg), -np.sin(hdg)],
                                 [np.sin(hdg),  np.cos(hdg)]])
                 points = points @ rot.T + np.array([bx, by])
-                boat = patches.Polygon(points, closed=True, facecolor='green', edgecolor='darkgreen', linewidth=2)
+                edge_color = 'darkred' if agent_color == 'red' else 'darkblue'
+                boat = patches.Polygon(points, closed=True, facecolor=agent_color, edgecolor=edge_color, linewidth=2)
                 self.ax.add_patch(boat)
 
         # --- Info dinamiche: distanza e step per ogni barca ---
@@ -336,7 +340,7 @@ class ImprovedSailingEnv(ParallelEnv):
 
         # Converti in immagine RGB
         self.fig.canvas.draw()
-        img = np.asarray(self.fig.canvas.buffer_rgba())
+        img = np.array(self.fig.canvas.buffer_rgba(), copy=True)
         img = img[:, :, :3]
         return img
 
