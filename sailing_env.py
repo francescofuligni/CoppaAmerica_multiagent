@@ -336,8 +336,8 @@ class ImprovedSailingEnv(ParallelEnv):
 
         # Converti in immagine RGB
         self.fig.canvas.draw()
-        img = np.frombuffer(self.fig.canvas.tostring_rgb(), dtype=np.uint8)
-        img = img.reshape(self.fig.canvas.get_width_height()[::-1] + (3,))
+        img = np.asarray(self.fig.canvas.buffer_rgba())
+        img = img[:, :, :3]
         return img
 
     def close(self):
