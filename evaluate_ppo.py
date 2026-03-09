@@ -2,24 +2,22 @@ import os
 import numpy as np
 import imageio
 from stable_baselines3 import PPO
-
 from sailing_env import ImprovedSailingEnv
-
 
 def create_video(model_path="models/sailing_ppo_improved", filename='videos/sailing_demo.mp4',
                  seed=None, wind_direction=None):
-    import os
-    import numpy as np
-    import imageio
-    from stable_baselines3 import PPO
-    from sailing_env import ImprovedSailingEnv
-
+    """
+    Genera video multi-agent mostrando per ogni barca:
+    - distanza dal target
+    - numero di step impiegati (se già arrivata)
+    """
     os.makedirs(os.path.dirname(filename), exist_ok=True)
 
     print("=" * 70)
     print("SAILING VIDEO GENERATION (PettingZoo Multi-Agent)")
     print("=" * 70)
 
+    # Carica modello
     model = PPO.load(model_path, device='cpu')
     env = ImprovedSailingEnv(render_mode='rgb_array')
 
@@ -33,7 +31,7 @@ def create_video(model_path="models/sailing_ppo_improved", filename='videos/sail
     frames = [env.render()]
     step = 0
 
-    # Salva gli step individuali per cui ogni barca raggiunge il target
+    # Traccia step per cui ogni barca raggiunge il target
     step_reached = {agent: None for agent in env.possible_agents}
     dist_dict = {agent: 999 for agent in env.possible_agents}
 
@@ -45,7 +43,7 @@ def create_video(model_path="models/sailing_ppo_improved", filename='videos/sail
                 action, _ = model.predict(obs_array, deterministic=True)
                 actions[agent] = action[0]
 
-        # Se tutti hanno già raggiunto il target, interrompi il loop
+        # Se tutte le barche hanno raggiunto il target, termina il loop
         if not actions:
             break
 
@@ -58,22 +56,14 @@ def create_video(model_path="models/sailing_ppo_improved", filename='videos/sail
             if agent in obs:
                 obs_array_dict[agent] = obs[agent].reshape(1, -1)
 
-        # Aggiorna le distanze e registra gli step di arrivo individuali
+        # Aggiorna distanze e registra gli step di arrivo individuali
         for agent in env.possible_agents:
             agent_info = info.get(agent, {})
             dist_dict[agent] = agent_info.get('distance_to_target', 999)
             if step_reached[agent] is None and dist_dict[agent] < env.target_radius:
                 step_reached[agent] = step
-
-        # Aggiorna il titolo di rendering con step individuali
-        title_lines = []
-        for agent in env.possible_agents:
-            sr = step_reached[agent]
-            if sr is not None:
-                title_lines.append(f"{agent} reached: {sr} steps")
-            else:
-                title_lines.append(f"{agent} distance: {dist_dict[agent]:.1f}m")
-        env.ax.set_title(" | ".join(title_lines), fontsize=10)
+                # Salva anche nello stato della barca
+                env.state[agent]['steps_to_target'] = step
 
     # Log finale
     for agent in env.possible_agents:
@@ -83,7 +73,7 @@ def create_video(model_path="models/sailing_ppo_improved", filename='videos/sail
         else:
             best = info.get(agent, {}).get('best_distance', '?')
             if isinstance(best, (float, int)):
-                print(f"   {agent} did NOT reach the target. Best distance: {best:.1f}m")
+                print(f"   {agent} did NOT reach the target. Best distance: {best:.1f} m")
             else:
                 print(f"   {agent} did NOT reach the target. Best distance: {best}")
 
@@ -97,7 +87,6 @@ def create_video(model_path="models/sailing_ppo_improved", filename='videos/sail
         print("Assicurati di avere il plugin imageio-ffmpeg installato: pip install imageio[ffmpeg]")
 
     env.close()
-
 
 def create_multi_video(model_path="models/sailing_ppo_improved", output_dir='videos'):
     """Genera 4 video con direzioni di vento diverse (N, E, S, W)."""

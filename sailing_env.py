@@ -261,10 +261,11 @@ class ImprovedSailingEnv(ParallelEnv):
 
         return observations, rewards, terminations, truncations, infos
 
+
     def render(self):
         if self.render_mode == 'rgb_array':
             return self._render_frame()
-            
+
     def _render_frame(self):
         if self.fig is None or self.ax is None:
             self.fig, self.ax = plt.subplots(figsize=(8,8))
@@ -276,7 +277,7 @@ class ImprovedSailingEnv(ParallelEnv):
         self.ax.grid(True, alpha=0.3)
         self.ax.set_facecolor('#a0d8ef')
 
-        # --- Frecce vento (griglia 8x8)
+        # --- Frecce vento ---
         xs, ys, us, vs = self.wind_field.get_grid_arrows(n_arrows=8)
         speeds = np.sqrt(us**2 + vs**2)
         self.ax.quiver(xs, ys, us, vs, speeds, cmap='Blues', alpha=0.55,
@@ -284,7 +285,7 @@ class ImprovedSailingEnv(ParallelEnv):
 
         colors = ['red', 'blue', 'green', 'orange']
 
-        # --- Disegna il target UNA sola volta ---
+        # --- Target (solo uno) ---
         if self.possible_agents:
             first_agent = self.possible_agents[0]
             if first_agent in self.target:
@@ -312,26 +313,26 @@ class ImprovedSailingEnv(ParallelEnv):
                 boat = patches.Polygon(points, closed=True, facecolor='green', edgecolor='darkgreen', linewidth=2)
                 self.ax.add_patch(boat)
 
-                # Timone
-                rudder_input = self.state[agent].get('rudder_angle', 0.0)
-                rudder_angle = rudder_input * np.radians(35)
-                stern_x = bx - boat_size*0.6*np.cos(hdg)
-                stern_y = by - boat_size*0.6*np.sin(hdg)
-                rudder_end_x = stern_x + 11*np.cos(hdg + np.pi + rudder_angle)
-                rudder_end_y = stern_y + 11*np.sin(hdg + np.pi + rudder_angle)
-                color = 'red' if abs(rudder_input)>0.6 else 'darkorange'
-                self.ax.plot([stern_x, rudder_end_x], [stern_y, rudder_end_y],
-                            color=color, linewidth=3, solid_capstyle='round')
+        # --- Info dinamiche: distanza e step per ogni barca ---
+        info_lines = []
+        for agent in self.possible_agents:
+            if agent in self.state:
+                bx, by = self.state[agent]['x'], self.state[agent]['y']
+                dist = np.linalg.norm(np.array([bx, by]) - self.target[agent])
+                steps = self.state[agent].get('steps_to_target', self.step_count)
+                info_lines.append(f"{agent}: distance {dist:.1f} m, {steps} steps")
 
-                # Indicatore timone
-                self.ax.text(bx+18, by+18, f"{int(rudder_input*25):+d}°", fontsize=7,
-                            color=color, fontweight='bold')
+        # --- Determina il vincitore se almeno una barca ha raggiunto il target ---
+        winner_text = ""
+        finished_agents = {a: self.state[a]['steps_to_target'] for a in self.possible_agents if 'steps_to_target' in self.state[a]}
+        if finished_agents:
+            winner_agent = min(finished_agents, key=finished_agents.get)
+            winner_steps = finished_agents[winner_agent]
+            winner_text = f"Vincitore: {winner_agent} ({winner_steps} steps)\n"
 
-        # Titolo info per la prima barca
-        ref_agent = self.possible_agents[0]
-        if ref_agent in self.state:
-            dist = np.linalg.norm(np.array([self.state[ref_agent]['x'], self.state[ref_agent]['y']]) - self.target[ref_agent])
-            self.ax.set_title(f"Step: {self.step_count} | Boat speed: {self.state[ref_agent]['speed']:.1f} kts | Distance: {dist:.0f} m", fontsize=10)
+        # Combina vincitore + info linee
+        full_title = winner_text + " | ".join(info_lines)
+        self.ax.set_title(full_title, fontsize=10)
 
         # Converti in immagine RGB
         self.fig.canvas.draw()
