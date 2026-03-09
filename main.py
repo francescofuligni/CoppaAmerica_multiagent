@@ -21,13 +21,13 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    # 1️⃣ Training del modello se richiesto o se non esiste il file
+    # 1 Training del modello se richiesto o se non esiste il file
     if args.train or not os.path.exists(args.model_path + ".zip"):
         print(f"Starting parallel training with {args.n_envs} environments for {args.steps} steps...")
         train_model(total_timesteps=args.steps, n_envs=args.n_envs, model_path=args.model_path)
     else:
         print(f"Model '{args.model_path}.zip' found. Skipping training.")
     
-    # 2️⃣ Generazione di un singolo video con tutte le barche (multi-agent)
+    # 2 Generazione di un singolo video con tutte le barche (multi-agent)
     print(f"\nGenerating single multi-agent video: {args.video_file}")
     create_video(model_path=args.model_path, filename=args.video_file)
