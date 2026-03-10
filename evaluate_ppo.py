@@ -37,10 +37,9 @@ def create_video(model_path="models/sailing_ppo_improved", filename='videos/sail
 
     while step < env.max_steps:
         actions = {}
-        for agent, obs_array in obs_array_dict.items():
-            # Predizione solo per agenti che non hanno ancora raggiunto il target
-            if step_reached[agent] is None:
-                action, _ = model.predict(obs_array, deterministic=True)
+        for agent in env.agents:
+            if agent in obs_array_dict:
+                action, _ = model.predict(obs_array_dict[agent], deterministic=True)
                 actions[agent] = action[0]
 
         # Se tutte le barche hanno raggiunto il target, termina il loop
@@ -58,12 +57,12 @@ def create_video(model_path="models/sailing_ppo_improved", filename='videos/sail
 
         # Aggiorna distanze e registra gli step di arrivo individuali
         for agent in env.possible_agents:
-            agent_info = info.get(agent, {})
-            dist_dict[agent] = agent_info.get('distance_to_target', 999)
-            if step_reached[agent] is None and dist_dict[agent] < env.target_radius:
-                step_reached[agent] = step
-                # Salva anche nello stato della barca
-                env.state[agent]['steps_to_target'] = step
+            if agent in info:
+                agent_info = info[agent]
+                dist_dict[agent] = agent_info.get('distance_to_target', 999)
+                
+                if step_reached[agent] is None and agent_info.get('steps_to_target') is not None:
+                    step_reached[agent] = agent_info['steps_to_target']
 
     # Log finale
     for agent in env.possible_agents:

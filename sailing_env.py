@@ -86,18 +86,23 @@ class ImprovedSailingEnv(ParallelEnv):
         self.agents = self.possible_agents[:]
         self.step_count = 0
 
-        # --- crea un solo target condiviso ---
-        shared_target = np.array([
-            self.np_random.uniform(self.field_size - 120, self.field_size - 40),
-            self.np_random.uniform(self.field_size - 120, self.field_size - 40)
-        ])
+        # --- crea linee di partenza e arrivo ---
+        self.start_line_y = 50.0
+        self.start_line_x = (40.0, 100.0)
         
-        for agent in self.possible_agents:
+        self.finish_line_y = 350.0
+        self.finish_line_x = (300.0, 360.0)
+        
+        shared_target = np.array([330.0, self.finish_line_y])
+        
+        initial_heading = np.arctan2(self.finish_line_y - self.start_line_y, 330.0 - 70.0)
+        
+        for i, agent in enumerate(self.possible_agents):
             self.state[agent] = {
-                'x': self.np_random.uniform(40, 120),
-                'y': self.np_random.uniform(40, 120),
+                'x': 55.0 if i == 0 else 85.0,
+                'y': self.start_line_y,
                 'speed': 0.0,
-                'heading': self.np_random.uniform(0, 2*np.pi),
+                'heading': initial_heading,
                 'rudder_angle': 0.0,
             }
             
@@ -116,11 +121,7 @@ class ImprovedSailingEnv(ParallelEnv):
             base_dir = float(self.np_random.uniform(0, 2 * np.pi))
         self.wind_field.reset(self.np_random, base_direction=base_dir)
 
-        for agent in self.possible_agents:
-            beam_reach = base_dir + np.pi / 2 * float(self.np_random.choice([-1, 1]))
-            self.state[agent]['heading'] = self._normalize_angle(
-                beam_reach + self.np_random.uniform(-np.radians(20), np.radians(20))
-            )
+        # Init heading random rimosso per mantenere quello perpendicolare fisso alla linea di partenza
 
         observations = {a: self._get_obs(a) for a in self.agents}
         infos = {a: {} for a in self.agents}
@@ -140,7 +141,8 @@ class ImprovedSailingEnv(ParallelEnv):
         
         heading = self.state[agent]['heading']
         rel_bearing = bearing_to_target - heading
-        apparent_wind = local_wind_dir - heading
+        wind_from_dir = local_wind_dir + np.pi
+        apparent_wind = wind_from_dir - heading
         
         obs = np.array([
             self.state[agent]['x'] / self.field_size,
@@ -195,7 +197,8 @@ class ImprovedSailingEnv(ParallelEnv):
             local_wind_dir, local_wind_speed = self.wind_field.get_local_wind(
                 self.state[agent]['x'], self.state[agent]['y']
             )
-            apparent_wind_angle = local_wind_dir - self.state[agent]['heading']
+            wind_from_dir = local_wind_dir + np.pi
+            apparent_wind_angle = wind_from_dir - self.state[agent]['heading']
             target_speed = self._get_polar_speed(apparent_wind_angle, local_wind_speed)
             self.state[agent]['speed'] = self.state[agent]['speed'] * self.speed_inertia + target_speed * (1.0 - self.speed_inertia)
 
@@ -225,7 +228,10 @@ class ImprovedSailingEnv(ParallelEnv):
                 self.best_distance[agent] = dist_to_target
 
             # --- TERMINAZIONE INDIVIDUALE ---
-            if dist_to_target < self.target_radius:
+            crossed_finish = (self.state[agent]['y'] >= self.finish_line_y and
+                              self.finish_line_x[0] <= self.state[agent]['x'] <= self.finish_line_x[1])
+            
+            if crossed_finish:
                 efficiency = max(0, self.max_steps - self.step_count) / self.max_steps
                 reward += 1000.0 + efficiency * 500.0
                 terminated = True
@@ -233,7 +239,8 @@ class ImprovedSailingEnv(ParallelEnv):
                 self.state[agent]['steps_to_target'] = self.step_count
 
             elif (self.state[agent]['x'] < 0 or self.state[agent]['x'] > self.field_size or
-                self.state[agent]['y'] < 0 or self.state[agent]['y'] > self.field_size):
+                self.state[agent]['y'] < 0 or self.state[agent]['y'] > self.field_size or
+                self.state[agent]['y'] >= self.finish_line_y + 10.0): # Uscito dal campo o mancato il gate
                 reward -= 150.0
                 terminated = True
 
@@ -286,13 +293,17 @@ class ImprovedSailingEnv(ParallelEnv):
 
         colors_map = {'red_boat': 'red', 'blue_boat': 'blue'}
 
-        # --- Target (solo uno) ---
-        if self.possible_agents:
-            first_agent = self.possible_agents[0]
-            if first_agent in self.target:
-                circle = plt.Circle(self.target[first_agent], self.target_radius,
-                                    color='green', alpha=0.3)
-                self.ax.add_patch(circle)
+        # --- Start / Finish Line ---
+        if hasattr(self, 'start_line_y'):
+            # Linea di partenza
+            self.ax.plot([self.start_line_x[0], self.start_line_x[1]], 
+                         [self.start_line_y, self.start_line_y], 
+                         'k--', linewidth=2, alpha=0.6, label='Start')
+                         
+            # Linea di arrivo (verde trasparente)
+            self.ax.plot([self.finish_line_x[0], self.finish_line_x[1]], 
+                         [self.finish_line_y, self.finish_line_y], 
+                         'g-', linewidth=4, alpha=0.4, label='Finish')
 
         # --- Traiettorie e barche ---
         for idx, agent in enumerate(self.possible_agents):

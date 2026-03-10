@@ -26,6 +26,8 @@ def train_model(total_timesteps=500000, n_envs=4, model_path="models/sailing_ppo
     env = ImprovedSailingEnv()
     
     # Adatta l'ambiente PettingZoo a VecEnv Standard di SB3
+    # Aggiungi black_death per permettere la rimozione di agenti in step diversi
+    env = ss.black_death_v3(env)
     env = ss.pettingzoo_env_to_vec_env_v1(env)
     
     # Parallelizza l'ambiente (usa num_cpus=0 per evitare bug noti tra le ultime versioni di supersuit e SB3)
