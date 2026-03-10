@@ -16,7 +16,7 @@ if __name__ == "__main__":
     parser.add_argument("--train", action="store_true", help="Forza l'avvio del training")
     parser.add_argument("--test-multi", action="store_true", help="Genera 4 video con direzioni di vento differenti")
     parser.add_argument("--steps", type=int, default=500000, help="Passi di training totali")
-    parser.add_argument("--n-envs", type=int, default=12, help="Numero di ambienti/processi paralleli")
+    parser.add_argument("--n-envs", type=int, default=14, help="Numero di ambienti/processi paralleli")
     parser.add_argument("--model-path", type=str, default="models/sailing_ppo_improved", help="Nome file del modello")
     parser.add_argument("--video-file", type=str, default="videos/sailing_demo.mp4", help="Nome file video in output")
     
