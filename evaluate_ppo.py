@@ -2,67 +2,82 @@ import os
 import numpy as np
 import imageio
 from stable_baselines3 import PPO
-
-# Importazioni locali
 from sailing_env import ImprovedSailingEnv
-
 
 def create_video(model_path="models/sailing_ppo_improved", filename='videos/sailing_demo.mp4',
                  seed=None, wind_direction=None):
-    """Genera video renderizzando direttamente dall'ambiente PettingZoo (senza SuperSuit)."""
-
+    """
+    Genera video multi-agent mostrando per ogni barca:
+    - distanza dal target
+    - numero di step impiegati (se già arrivata)
+    """
     os.makedirs(os.path.dirname(filename), exist_ok=True)
 
     print("=" * 70)
-    print("SAILING VIDEO GENERATION (PettingZoo)")
+    print("SAILING VIDEO GENERATION (PettingZoo Multi-Agent)")
     print("=" * 70)
 
-    try:
-        model = PPO.load(model_path, device='cpu')
-    except Exception as e:
-        print(f"Error loading model '{model_path}': {e}")
-        return
-
+    # Carica modello
+    model = PPO.load(model_path, device='cpu')
     env = ImprovedSailingEnv(render_mode='rgb_array')
-    agent = 'boat_0'
 
     reset_opts = {}
     if wind_direction is not None:
         reset_opts['wind_direction'] = wind_direction
+
     obs, _ = env.reset(seed=seed, options=reset_opts if reset_opts else None)
-    obs_array = obs[agent].reshape(1, -1)
+    obs_array_dict = {agent: obs[agent].reshape(1, -1) for agent in env.agents}
 
     frames = [env.render()]
-
-    done = False
     step = 0
-    dist = 999
 
-    while not done and step < env.max_steps:
-        action, _ = model.predict(obs_array, deterministic=True)
-        actions = {agent: action[0]}
+    # Traccia step per cui ogni barca raggiunge il target
+    step_reached = {agent: None for agent in env.possible_agents}
+    dist_dict = {agent: 999 for agent in env.possible_agents}
+
+    while step < env.max_steps:
+        actions = {}
+        for agent in env.agents:
+            if agent in obs_array_dict:
+                action, _ = model.predict(obs_array_dict[agent], deterministic=True)
+                actions[agent] = action[0]
+
+        # Se tutte le barche hanno raggiunto il target, termina il loop
+        if not actions:
+            break
+
         obs, reward, terminated, truncated, info = env.step(actions)
         frames.append(env.render())
-
-        done = terminated.get(agent, False) or truncated.get(agent, False)
         step += 1
 
-        if agent in obs:
-            obs_array = obs[agent].reshape(1, -1)
+        # Aggiorna le osservazioni
+        for agent in env.agents:
+            if agent in obs:
+                obs_array_dict[agent] = obs[agent].reshape(1, -1)
 
-        dist = info.get(agent, {}).get('distance_to_target', 999)
+        # Aggiorna distanze e registra gli step di arrivo individuali
+        for agent in env.possible_agents:
+            if agent in info:
+                agent_info = info[agent]
+                dist_dict[agent] = agent_info.get('distance_to_target', 999)
+                
+                if step_reached[agent] is None and agent_info.get('steps_to_target') is not None:
+                    step_reached[agent] = agent_info['steps_to_target']
 
-        if done and dist < env.target_radius:
-            print(f"   Target reached in {step} steps!")
-            # Pausa sul frame finale (stato reale, nessun auto-reset)
-            for _ in range(20):
-                frames.append(frames[-1])
+    # Log finale
+    for agent in env.possible_agents:
+        sr = step_reached[agent]
+        if sr is not None:
+            print(f"   {agent} reached the target in {sr} steps!")
+        else:
+            best = info.get(agent, {}).get('best_distance', '?')
+            if isinstance(best, (float, int)):
+                print(f"   {agent} did NOT reach the target. Best distance: {best:.1f} m")
+            else:
+                print(f"   {agent} did NOT reach the target. Best distance: {best}")
 
-    if not done or dist >= env.target_radius:
-        best = info.get(agent, {}).get('best_distance', '?')
-        print(f"   Target NOT reached. Best distance: {best}m")
-
-    print(f"\n3. Saving video to {filename} ({len(frames)} frames)...")
+    # Salva il video
+    print(f"\nSaving video to {filename} ({len(frames)} frames)...")
     try:
         imageio.mimsave(filename, frames, fps=15)
         print(f"Video created: {filename}")
@@ -72,14 +87,13 @@ def create_video(model_path="models/sailing_ppo_improved", filename='videos/sail
 
     env.close()
 
-
 def create_multi_video(model_path="models/sailing_ppo_improved", output_dir='videos'):
     """Genera 4 video con direzioni di vento diverse (N, E, S, W)."""
     wind_configs = [
-        ('Nord',  np.radians(90)),   # vento da Sud verso Nord (math: 90°)
-        ('Est',   np.radians(0)),    # vento da Ovest verso Est (math: 0°)
-        ('Sud',   np.radians(270)),  # vento da Nord verso Sud (math: 270°)
-        ('Ovest', np.radians(180)),  # vento da Est verso Ovest (math: 180°)
+        ('Nord',  np.radians(90)),
+        ('Est',   np.radians(0)),
+        ('Sud',   np.radians(270)),
+        ('Ovest', np.radians(180)),
     ]
 
     print("\n" + "=" * 70)

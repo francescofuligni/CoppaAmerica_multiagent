@@ -16,7 +16,7 @@ Uso:
 """
 
 import numpy as np
-
+from typing import Optional
 
 class WindField:
     """
@@ -73,7 +73,7 @@ class WindField:
     # API pubblica
     # ------------------------------------------------------------------
 
-    def reset(self, np_random, base_direction: float | None = None) -> None:
+    def reset(self, np_random, base_direction: Optional[float] = None) -> None:
         """
         Reimposta il campo di vento.
 
