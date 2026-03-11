@@ -88,29 +88,21 @@ def create_video(model_path="models/sailing_ppo_improved", filename='videos/sail
     env.close()
 
 def create_multi_video(model_path="models/sailing_ppo_improved", output_dir='videos'):
-    """Genera 4 video con direzioni di vento diverse (N, E, S, W)."""
-    wind_configs = [
-        ('Nord',  np.radians(90)),
-        ('Est',   np.radians(0)),
-        ('Sud',   np.radians(270)),
-        ('Ovest', np.radians(180)),
-    ]
+    """Genera 3 video di test della regata con posizioni di partenza casuali e barche multiple."""
 
     print("\n" + "=" * 70)
-    print(f"  TEST FINALE: 4 video con vento diverso")
+    print(f"  TEST FINALE: 3 video di regata")
     print("=" * 70)
 
-    for i, (label, wind_dir) in enumerate(wind_configs, 1):
-        compass_deg = (90 - np.degrees(wind_dir)) % 360
-        fname = os.path.join(output_dir, f'test_{i}_vento_{label}.mp4')
-        print(f"\n--- Test {i}/4: Vento verso {label} ({compass_deg:.0f} bussola) ---")
+    for i in range(1, 4):
+        fname = os.path.join(output_dir, f'test_{i}_regata.mp4')
+        print(f"\n--- Test {i}/3: Regata standard (Seed casuale {42 + i}) ---")
         create_video(
             model_path=model_path,
             filename=fname,
-            seed=42 + i,
-            wind_direction=wind_dir,
+            seed=42 + i
         )
 
     print("\n" + "=" * 70)
-    print(f"  4 video salvati in {output_dir}/")
+    print(f"  3 video salvati in {output_dir}/")
     print("=" * 70)

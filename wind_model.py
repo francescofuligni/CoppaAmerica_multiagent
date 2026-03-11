@@ -46,7 +46,7 @@ class WindField:
         self,
         field_size: float = 400,
         grid_n: int = 10,
-        base_speed_range: tuple = (10, 18),
+        base_speed_range: tuple = (15.0, 22.0),
         temporal_drift_dir: float = 0.02,
         temporal_drift_speed: float = 0.3,
         spatial_std_dir: float = 0.15,
@@ -120,7 +120,7 @@ class WindField:
             rng.uniform(-self.temporal_drift_speed, self.temporal_drift_speed)
         )
         self.base_speed = float(
-            np.clip(self.base_speed, self.base_speed_range[0], self.base_speed_range[1])
+            np.clip(self.base_speed, 15.0, self.base_speed_range[1])
         )
 
         # --- Random walk mean-reverting delle perturbazioni spaziali ---
@@ -174,7 +174,7 @@ class WindField:
         )
 
         direction = (self.base_direction + local_delta_dir) % (2 * np.pi)
-        speed = float(np.clip(self.base_speed + local_delta_speed, 3.0, 30.0))
+        speed = float(np.clip(self.base_speed + local_delta_speed, 15.0, 30.0))
 
         return float(direction), speed
 
