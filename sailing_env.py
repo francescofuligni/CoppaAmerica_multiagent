@@ -345,6 +345,7 @@ class ImprovedSailingEnv(ParallelEnv):
                     efficiency = max(0, self.max_steps - self.step_count) / self.max_steps
                     reward += 2000.0 + efficiency * 1000.0 # Vittoria finale della regata
                     terminated = True
+                    self.state[agent]['steps_to_target'] = self.step_count
 
             if self.step_count >= self.max_steps:
                 truncated = True
@@ -527,12 +528,12 @@ class ImprovedSailingEnv(ParallelEnv):
         
         self.fig.canvas.draw()
         try:
-            image = np.asarray(self.fig.canvas.buffer_rgba())[:, :, :3]
+            # Need copy=True so the array doesn't reference the mutable buffer
+            image = np.array(self.fig.canvas.buffer_rgba(), copy=True)[:, :, :3]
         except AttributeError:
              image = np.frombuffer(self.fig.canvas.tostring_rgb(), dtype=np.uint8)
-             image = image.reshape(self.fig.canvas.get_width_height()[::-1] + (3,))
+             image = np.array(image.reshape(self.fig.canvas.get_width_height()[::-1] + (3,)), copy=True)
              
-        plt.close(self.fig)
         return image
     def close(self):
         if self.fig is not None:
