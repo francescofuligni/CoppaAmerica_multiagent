@@ -26,7 +26,7 @@ sailing_tensorboard/
 logs/
 checkpoints/
 *.zip
-*.mp4
+#*.mp4
 *.gif
 *.avi
 
