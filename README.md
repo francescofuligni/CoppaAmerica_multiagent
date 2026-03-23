@@ -193,3 +193,30 @@ Esegui i test automatici con:
 
 - **Cancello di Bolina**: Per completare il primo lato (upwind), le barche devono obbligatoriamente attraversare *in mezzo* alle due boe del cancello prima di aggirarne una per scendere di poppa.
 - **Foiling**: Penalità ridotte per caduta dai foil ("drop foil") e per l'abuso di timone, favorendo manovre tattiche e virate ("tack") più strette e realistiche senza che l'agente preferisca uscire dai bordi del campo.
+
+### Scelta del Modello: Quale usare?
+
+Nella cartella `models/` troverai vari salvataggi, ma i due principali sono:
+- `sailing_ppo_improved.zip`: Modello legacy della versione precedente.
+- **`sailing_ppo_realistic_until100.zip` (CONSIGLIATO / DA USARE)**: È l'ultimo modello convergente e il più completo.
+
+**Perché ci sono due modelli e cosa cambia?**
+Il modello `realistic_until100` "capisce" le nuove regole geometriche del campo di regata e la nuova fisica. Ecco cosa è stato implementato esattamente in questo branch:
+1. **Cancello di Bolina Reale**: Per completare il primo lato (upwind), le barche ora devono obbligatoriamente attraversare *in mezzo* alle due boe del gate prima di aggirarne una e scendere di poppa (nel vecchio modello bastava superare l'asse Y e questo creava bug geometrici).
+2. **Foiling Ottimizzato**: Sono state ridotte le penalità catastrofiche per la caduta dal foil e l'uso brusco del timone. L'agente non ha più "paura" di virare, riducendo l'over-standing e favorendo manovre tattiche molto più verosimili.
+3. **Addestramento Perfetto**: L'addestramento usa un **Callback (Early Stopping)** customizzato in `callbacks.py` che interrompe il training in automatico solo ed esclusivamente quando le barche chiudono la regata con successo per **100 episodi consecutivi (100% success rate)**.
+
+### Come ri-addestrare (Parametri per i prossimi sviluppi in Multi-Agent)
+
+Se devi implementare nuove feature (ad esempio la visibilità tra barche per permettere l'evitamento collisioni) e hai bisogno di ri-addestrare l'agente, ecco come procedere.
+
+I migliori parametri che hanno portato alla creazione del modello "realistic_until100" sono:
+- **Strategia a Chunk (in `train_ppo.py`)**: L'addestramento valuta la rete a intervalli regolari e si ferma da solo se rileva 100 successi in un'unica finestra.
+- `total_timesteps=200000` (Spesso converge prima grazie allo stop automatico, tra i 120k e i 150k step).
+- `n_envs=12` (Usa quanti più ambienti paralleli riesci. 12 è essenziale per stabilizzare l'apprendimento su CPU, poiché evita che un random walk troppo instabile del vento rompa la policy distruggendo i progressi).
+
+Puoi lanciare il training perfetto direttamente tramite questa istruzione in Python:
+```python
+from train_ppo import train_model
+train_model(total_timesteps=200000, n_envs=12, model_path='models/mio_nuovo_test_collisioni')
+```
