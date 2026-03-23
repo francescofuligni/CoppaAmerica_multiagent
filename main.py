@@ -6,10 +6,41 @@ Entry Point principale per gestire l'addestramento e la generazione video.
 
 import os
 import argparse
+from stable_baselines3 import PPO
 
 # Moduli locali
 from train_ppo import train_model
 from evaluate_ppo import create_video, create_multi_video
+from sailing_env import ImprovedSailingEnv
+
+
+def is_model_compatible(model_path: str) -> bool:
+    """Check if saved model spaces match current environment spaces."""
+    model_zip = model_path + ".zip"
+    if not os.path.exists(model_zip):
+        return False
+
+    env = ImprovedSailingEnv()
+    try:
+        model = PPO.load(model_path, device='cpu')
+        sample_agent = env.possible_agents[0]
+        env_obs_dim = int(env.observation_space(sample_agent).shape[0])
+        env_act_dim = int(env.action_space(sample_agent).shape[0])
+        model_obs_dim = int(model.observation_space.shape[0])
+        model_act_dim = int(model.action_space.shape[0])
+
+        if model_obs_dim != env_obs_dim or model_act_dim != env_act_dim:
+            print(
+                f"Model/environment mismatch: obs {model_obs_dim}!={env_obs_dim} "
+                f"or act {model_act_dim}!={env_act_dim}. Retraining required."
+            )
+            return False
+        return True
+    except Exception as exc:
+        print(f"Unable to validate model compatibility ({exc}). Retraining required.")
+        return False
+    finally:
+        env.close()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Gestore Addestramento Barca a Vela Multi-Agent")
@@ -22,8 +53,9 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    # 1 Training del modello se richiesto o se non esiste il file
-    if args.train or not os.path.exists(args.model_path + ".zip"):
+    # 1 Training del modello se richiesto, mancante, o non compatibile con env corrente
+    model_ready = is_model_compatible(args.model_path)
+    if args.train or not model_ready:
         print(f"Starting parallel training with {args.n_envs} environments for {args.steps} steps...")
         train_model(total_timesteps=args.steps, n_envs=args.n_envs, model_path=args.model_path)
     else:

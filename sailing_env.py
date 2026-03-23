@@ -9,6 +9,14 @@ import matplotlib.patches as patches
 from typing import Optional
 
 from wind_model import WindField
+from sail_trim import (
+    action_to_trim_level,
+    normalize_twa_deg,
+    optimal_trim_for_twa,
+    trim_efficiency,
+    trim_level_to_action,
+    trim_speed_multiplier,
+)
 
 class ImprovedSailingEnv(ParallelEnv):
     """
@@ -24,7 +32,7 @@ class ImprovedSailingEnv(ParallelEnv):
         self.max_wind = 30.0
         self.target_radius = 50.0  # Kept small relative to field to require precision
         self.dt = 1.0
-        self.max_steps = 2500
+        self.max_steps = 1800
         self.render_mode = render_mode
 
         # Ora due barche
@@ -34,6 +42,12 @@ class ImprovedSailingEnv(ParallelEnv):
         # Timone continuo
         self.max_turn_per_step = np.radians(25)
         self.min_turn_factor = 0.12
+        self.mark_round_margin = 25.0
+        self.post_round_offset_x = 90.0
+        self.post_round_offset_y = 120.0
+        # Trim vele continuo (0=lasco, 1=cazzato) con inerzia meccanica
+        self.max_trim_delta_per_step = 0.10
+        self.default_trim_level = 0.60
         # Inerzia velocità (momentum). Altissima sui foil (scivola nell'aria), bassa in acqua
         self.displacement_inertia = 0.85
         self.foiling_inertia = 0.98
@@ -49,13 +63,14 @@ class ImprovedSailingEnv(ParallelEnv):
         self.bottom_gate_y = 200.0
         self.gate_width = 300.0
 
-        # Obs: (x, y, speed, sin_h, cos_h, sin_aw, cos_aw, wind_speed, dist, sin_rb, cos_rb, rudder, is_foiling, active_foil, is_upwind_leg)
+        # Obs: (x, y, speed, sin_h, cos_h, sin_aw, cos_aw, wind_speed, dist, sin_rb, cos_rb,
+        #       rudder, sail_trim, is_foiling, active_foil, is_upwind_leg)
         self.observation_spaces = {agent: spaces.Box(
-            low=-1.0, high=1.0, shape=(15,), dtype=np.float32
+            low=-1.0, high=1.0, shape=(16,), dtype=np.float32
         ) for agent in self.possible_agents}
 
         self.action_spaces = {agent: spaces.Box(
-            low=-1.0, high=1.0, shape=(1,), dtype=np.float32
+            low=-1.0, high=1.0, shape=(2,), dtype=np.float32
         ) for agent in self.possible_agents}
         
         self.state = {}
@@ -65,6 +80,7 @@ class ImprovedSailingEnv(ParallelEnv):
         self.trajectory = {}
         self.previous_distance = {}
         self.best_distance = {}
+        self.round_marks = {}
         self.fig = None
         self.ax = None
 
@@ -74,12 +90,9 @@ class ImprovedSailingEnv(ParallelEnv):
     def action_space(self, agent):
         return self.action_spaces[agent]
 
-    def _get_polar_speed(self, apparent_wind_angle, wind_speed, is_foiling):
+    def _get_polar_speed(self, apparent_wind_angle, wind_speed, is_foiling, sail_trim):
         # NOTA: apparent_wind_angle e' in realtà il True Wind Angle (TWA)!
-        diff = apparent_wind_angle % (2 * np.pi)
-        if diff > np.pi:
-            diff = 2 * np.pi - diff
-        angle_deg = np.degrees(diff)
+        angle_deg = normalize_twa_deg(apparent_wind_angle)
             
         if is_foiling:
             # Foiling (AC75-like): Impossibile stringere il vento puro, si vola solo dai 45-50° in sù (bolina larga/traverso)
@@ -97,10 +110,28 @@ class ImprovedSailingEnv(ParallelEnv):
             elif angle_deg < 140: speed_ratio = 1.65 - (angle_deg - 110) * 0.01
             else: speed_ratio = 1.35 - (angle_deg - 140) * 0.005 # A 180 gradi non stalla, viaggia tranquilla in acqua
             
-        return min(speed_ratio * wind_speed, self.max_speed)
+        base_speed = min(speed_ratio * wind_speed, self.max_speed)
+        optimal_trim = optimal_trim_for_twa(angle_deg, is_foiling)
+        trim_eff = trim_efficiency(sail_trim, optimal_trim, is_foiling)
+        speed = min(base_speed * trim_speed_multiplier(trim_eff, is_foiling), self.max_speed)
+        return speed, trim_eff, optimal_trim, angle_deg
 
     def _normalize_angle(self, angle):
         return angle % (2 * np.pi)
+
+    def _compute_vmg_to_target(self, agent: str) -> float:
+        """Velocity made good (kts) lungo la direzione del target corrente."""
+        pos = np.array([self.state[agent]['x'], self.state[agent]['y']], dtype=np.float32)
+        target_vec = self.target[agent].astype(np.float32) - pos
+        target_norm = float(np.linalg.norm(target_vec))
+        if target_norm < 1e-6:
+            return 0.0
+
+        target_unit = target_vec / target_norm
+        heading = self.state[agent]['heading']
+        speed = float(self.state[agent]['speed'])
+        boat_vel = np.array([np.cos(heading), np.sin(heading)], dtype=np.float32) * speed
+        return float(np.dot(boat_vel, target_unit))
 
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
         if seed is not None:
@@ -130,14 +161,21 @@ class ImprovedSailingEnv(ParallelEnv):
                 'speed': 0.0,
                 'heading': 0.0, # Verrà sovrascritto
                 'rudder_angle': 0.0,
+                'sail_trim': self.default_trim_level,
                 'is_foiling': False,
                 'active_foil': 1.0,
                 'dropped_foil_penalty_applied': False,
-                'current_leg': 1 # 1: Bolina, 2: Poppa
+                'current_leg': 1, # 1: Bolina, 2: Poppa
+                'post_round_pending': False,
             }
+
+            # Ogni barca deve girare realmente una boa (sinistra/destra) e non solo tagliare la linea gate.
+            rounding_side = float(self.np_random.choice([-1, 1]))
+            round_mark_x = self.course_center_x + rounding_side * (self.gate_width / 2.0)
+            self.round_marks[agent] = {'side': rounding_side, 'x': round_mark_x}
             
-            # Bersaglio Iniziale: centro del Top Gate
-            self.target[agent] = np.array([self.course_center_x, self.top_gate_y])
+            # Bersaglio Iniziale: boa da girare (non il centro gate).
+            self.target[agent] = np.array([round_mark_x, self.top_gate_y])
             
             self.trajectory[agent] = [np.array([self.state[agent]['x'], self.state[agent]['y']])]
             pos = np.array([self.state[agent]['x'], self.state[agent]['y']])
@@ -149,6 +187,13 @@ class ImprovedSailingEnv(ParallelEnv):
             start_heading = base_dir + np.pi + tack_sign * np.radians(50.0)
             start_heading += self.np_random.uniform(-np.radians(10), np.radians(10))
             self.state[agent]['heading'] = self._normalize_angle(start_heading)
+
+            local_wind_dir, _ = self.wind_field.get_local_wind(
+                self.state[agent]['x'], self.state[agent]['y']
+            )
+            twa = (local_wind_dir + np.pi) - self.state[agent]['heading']
+            twa_deg = normalize_twa_deg(twa)
+            self.state[agent]['sail_trim'] = optimal_trim_for_twa(twa_deg, False)
 
         observations = {a: self._get_obs(a) for a in self.agents}
         infos = {a: {} for a in self.agents}
@@ -184,6 +229,7 @@ class ImprovedSailingEnv(ParallelEnv):
             dist_to_target / (self.field_size * np.sqrt(2)),     # [0, 1]
             np.sin(rel_bearing), np.cos(rel_bearing),            # [-1, 1]
             float(self.state[agent]['rudder_angle']),             # [-1, 1]
+            trim_level_to_action(self.state[agent]['sail_trim']), # [-1, 1]
             1.0 if self.state[agent]['is_foiling'] else 0.0,     # [0, 1] boolean foiling state
             self.state[agent]['active_foil'],                    # [-1, 1] Port vs Starboard foil
             1.0 if self.state[agent]['current_leg'] == 1 else -1.0 # [-1, 1] Leg information
@@ -212,10 +258,19 @@ class ImprovedSailingEnv(ParallelEnv):
 
             pos = np.array([self.state[agent]['x'], self.state[agent]['y']])
             prev_dist = np.linalg.norm(pos - self.target[agent])
+            prev_y = float(self.state[agent]['y'])
             
             prev_rudder = self.state[agent].get('rudder_angle', 0.0)
+            prev_trim = self.state[agent].get('sail_trim', self.default_trim_level)
 
-            rudder_input = float(np.clip(action[0] if hasattr(action, '__len__') else action, -1.0, 1.0))
+            local_wind_dir, local_wind_speed = self.wind_field.get_local_wind(
+                self.state[agent]['x'], self.state[agent]['y']
+            )
+
+            rudder_raw = action[0] if hasattr(action, '__len__') else action
+            trim_raw = action[1] if (hasattr(action, '__len__') and len(action) > 1) else None
+
+            rudder_input = float(np.clip(rudder_raw, -1.0, 1.0))
             self.state[agent]['rudder_angle'] = rudder_input
 
             # calcola heading e velocità
@@ -226,6 +281,22 @@ class ImprovedSailingEnv(ParallelEnv):
                 self.state[agent]['heading'] + turn_rate * self.dt
             )
 
+            apparent_wind_angle = (local_wind_dir + np.pi) - self.state[agent]['heading']
+            twa_deg = normalize_twa_deg(apparent_wind_angle)
+
+            if trim_raw is None:
+                # Compatibilità con policy legacy (azione 1D): usa auto-trim verso l'ottimo.
+                trim_target_level = optimal_trim_for_twa(twa_deg, self.state[agent]['is_foiling'])
+            else:
+                trim_target_level = action_to_trim_level(float(np.clip(trim_raw, -1.0, 1.0)))
+
+            trim_delta = float(np.clip(
+                trim_target_level - prev_trim,
+                -self.max_trim_delta_per_step,
+                self.max_trim_delta_per_step,
+            ))
+            self.state[agent]['sail_trim'] = float(np.clip(prev_trim + trim_delta, 0.0, 1.0))
+
             # 3. Frenata virata brusca: ridotta in foiling per permettere virate/strambate più vere e lunghe
             if self.state[agent]['is_foiling']:
                 brake_factor = (abs(rudder_input) ** 1.5) * 0.05
@@ -234,11 +305,12 @@ class ImprovedSailingEnv(ParallelEnv):
                 brake_factor = (abs(rudder_input) ** 1.5) * 0.35
                 self.state[agent]['speed'] *= (1.0 - brake_factor)
 
-            local_wind_dir, local_wind_speed = self.wind_field.get_local_wind(
-                self.state[agent]['x'], self.state[agent]['y']
+            target_speed, trim_eff, trim_target, _ = self._get_polar_speed(
+                apparent_wind_angle,
+                local_wind_speed,
+                self.state[agent]['is_foiling'],
+                self.state[agent]['sail_trim'],
             )
-            apparent_wind_angle = (local_wind_dir + np.pi) - self.state[agent]['heading']
-            target_speed = self._get_polar_speed(apparent_wind_angle, local_wind_speed, self.state[agent]['is_foiling'])
             
             current_inertia = self.foiling_inertia if self.state[agent]['is_foiling'] else self.displacement_inertia
             self.state[agent]['speed'] = self.state[agent]['speed'] * current_inertia + target_speed * (1.0 - current_inertia)
@@ -256,6 +328,16 @@ class ImprovedSailingEnv(ParallelEnv):
             elif self.state[agent]['speed'] < self.foiling_drop_speed:
                 self.state[agent]['is_foiling'] = False
 
+            trim_target = optimal_trim_for_twa(twa_deg, self.state[agent]['is_foiling'])
+            trim_eff = trim_efficiency(
+                self.state[agent]['sail_trim'],
+                trim_target,
+                self.state[agent]['is_foiling'],
+            )
+            trim_error = abs(self.state[agent]['sail_trim'] - trim_target)
+            vmg = self._compute_vmg_to_target(agent)
+            vmg_norm = float(np.clip(vmg / self.max_speed, -1.0, 1.0))
+
             dropped_foil = was_foiling and not self.state[agent]['is_foiling']
             displacement = self.state[agent]['speed'] * 0.514 * self.dt
             self.state[agent]['x'] += displacement * np.cos(self.state[agent]['heading'])
@@ -270,6 +352,8 @@ class ImprovedSailingEnv(ParallelEnv):
             reward = 0.0
             terminated = False
             truncated = False
+            # Reset terminal marker each step while agent is alive.
+            self.state[agent]['termination_reason'] = None
             # 1. Progresso verso target e VMG (Velocity Made Good)
             distance_delta = prev_dist - dist_to_target
             
@@ -281,17 +365,40 @@ class ImprovedSailingEnv(ParallelEnv):
             else:
                 reward += distance_delta * 0.1
 
+            # VMG shaping esplicito per massimizzare velocità utile su bolina e poppa.
+            leg_vmg_weight = 1.6 if self.state[agent]['current_leg'] == 1 else 1.25
+            reward += max(vmg_norm, 0.0) * leg_vmg_weight * 6.0
+            reward += min(vmg_norm, 0.0) * leg_vmg_weight * 2.0
+
+            # Shaping diretto per direzione di gamba sulla coordinata Y.
+            # Leg 1 (bolina): salire verso top gate. Leg 2 (poppa): scendere verso bottom gate.
+            leg_delta_y = float(self.state[agent]['y'] - prev_y)
+            if self.state[agent]['current_leg'] == 1:
+                reward += leg_delta_y * 0.12
+            else:
+                reward -= leg_delta_y * 0.12
+
             # 2. Costo per step (urgenza)
-            reward -= 0.5
+            reward -= 0.20
 
-            # 3. Penalità timone logaritmica/esponenziale (riduce strambate secche)
-            reward -= (abs(rudder_input) ** 3) * 15.0
+            # 3. Penalità timone logaritmica/esponenziale (ridotta, affidiamoci all'attrito fisico)
+            reward -= (abs(rudder_input) ** 3) * 2.0
             rudder_delta = rudder_input - prev_rudder
-            reward -= (abs(rudder_delta) ** 2) * 50.0
+            reward -= (abs(rudder_delta) ** 2) * 5.0
 
-            # 3.b Drop off foil penalty (massive cost - as requested by user)
+            # 3.c Trim sails: premia assetto efficiente, penalizza movimenti bruschi e fuori-trim ad alta velocità
+            reward += (trim_eff - 0.72) * 8.5
+            reward -= (abs(trim_delta) ** 1.5) * 5.5
+            leg_trim_threshold = 0.18 if self.state[agent]['current_leg'] == 1 else 0.24
+            if self.state[agent]['speed'] > 10.0 and trim_error > leg_trim_threshold:
+                reward -= (trim_error - leg_trim_threshold) * 18.0
+
+            # Accoppia trim a VMG: trim corretto quando la barca accelera verso il target.
+            reward += max(vmg_norm, 0.0) * (trim_eff - 0.50) * 5.0
+
+            # 3.b Drop off foil penalty (ridotta: la vera penalità sarà chimica/fisica causata dalla perdita di VMG)
             if dropped_foil:
-                reward -= 300.0  # Costo catastrofico per forzare a girare largo anziché cadere
+                reward -= 40.0  # Penalità tattica, ma non così alta da impedire le virate di layline
 
             # 4. Foiling and SPEED INCENTIVES (Primary focus of the agent)
             if self.state[agent]['is_foiling']:
@@ -316,42 +423,67 @@ class ImprovedSailingEnv(ParallelEnv):
             
             # Boundary penalty continua: se esce dal corridoio virtuale, paga pesantemente a ogni step
             if bx < self.boundaries['x_min'] or bx > self.boundaries['x_max']:
-                reward -= 50.0  # Costringe l'agente a virare PRIMA del limite
+                reward -= 12.0  # Penalità morbida ma continua: favorisce recupero senza collasso
                 
-            # Fuori mappa totale (Game Over se sfonda perfino i bordi della telecamera estesa)
+            # Fuori mappa totale: nessun rimbalzo, termina episodio dell'agente.
             if bx < 0 or bx > self.field_size or by < 0 or by > self.field_size:
-                reward -= 300.0
+                reward -= 260.0
                 terminated = True
-                # salva step individuale
-                self.state[agent]['steps_to_target'] = self.step_count
+                self.state[agent]['termination_reason'] = 'out_of_bounds'
 
             # Controllo attraversamento Cancello (Gate)
             gate_left = self.course_center_x - self.gate_width / 2.0
             gate_right = self.course_center_x + self.gate_width / 2.0
             
             if self.state[agent]['current_leg'] == 1:
-                # Upwind: deve superare la Y del Top Gate, restando in mezzo alle boe X
+                # Upwind: deve tagliare in mezzo alle boe (Y >= top_gate_y) passando fra gate_left e gate_right.
+                mark_info = self.round_marks[agent]
+                mark_x = mark_info['x']
+                mark_side = mark_info['side']
+                
+                # Check del taglio corretto della linea fra le due boe:
                 if by >= self.top_gate_y and gate_left <= bx <= gate_right:
                     self.state[agent]['current_leg'] = 2
                     reward += 500.0  # Super Bonus per aver girato la boa di bolina
-                    self.target[agent] = np.array([self.course_center_x, self.bottom_gate_y])
-                    # Reset distanze per il nuovo lato (Poppa)
+                    self.state[agent]['post_round_pending'] = True
+                    # Ora imposta il target esterno alla boa per costringere a fare il giro attorno a essa
+                    ext_offset = 60.0 # distanza verso l'esterno
+                    down_offset = 40.0 # distanza verso il basso (poppa) per completare la curva
+                    
+                    if bx < self.course_center_x: # Ha tagliato vicino alla boa di sinistra
+                        self.target[agent] = np.array([gate_left - ext_offset, self.top_gate_y - down_offset])
+                    else: # Ha tagliato vicino a destra
+                        self.target[agent] = np.array([gate_right + ext_offset, self.top_gate_y - down_offset])
+
                     self.previous_distance[agent] = np.linalg.norm(pos - self.target[agent])
                     self.best_distance[agent] = self.previous_distance[agent]
                     
             elif self.state[agent]['current_leg'] == 2:
+                # Prima di puntare il gate di arrivo, obbliga un'uscita pulita dalla boa.
+                if self.state[agent].get('post_round_pending', False):
+                    if dist_to_target <= max(self.target_radius * 1.2, 60.0):
+                        self.state[agent]['post_round_pending'] = False
+                        self.target[agent] = np.array([self.course_center_x, self.bottom_gate_y])
+                        self.previous_distance[agent] = np.linalg.norm(pos - self.target[agent])
+                        self.best_distance[agent] = self.previous_distance[agent]
+
                 # Downwind: deve scendere sotto la Y del Bottom Gate, restando in mezzo alle boe X
-                if by <= self.bottom_gate_y and gate_left <= bx <= gate_right:
+                if (not self.state[agent].get('post_round_pending', False)) and by <= self.bottom_gate_y and gate_left <= bx <= gate_right:
                     efficiency = max(0, self.max_steps - self.step_count) / self.max_steps
                     reward += 2000.0 + efficiency * 1000.0 # Vittoria finale della regata
                     terminated = True
                     self.state[agent]['steps_to_target'] = self.step_count
+                    self.state[agent]['termination_reason'] = 'finished_race'
 
             if self.step_count >= self.max_steps:
                 truncated = True
+                self.state[agent]['termination_reason'] = 'timeout'
                 progress = 1.0 - (self.best_distance[agent] / max(self.previous_distance[agent], 1.0))
                 if progress > 0:
                     reward += progress * 200.0
+
+            termination_reason = self.state[agent].get('termination_reason', None)
+            finished_race = termination_reason == 'finished_race'
 
             # aggiorna dizionari
             observations[agent] = self._get_obs(agent)
@@ -359,11 +491,23 @@ class ImprovedSailingEnv(ParallelEnv):
             terminations[agent] = terminated
             truncations[agent] = truncated
             infos[agent] = {
+                'agent': agent,
                 'distance_to_target': dist_to_target,
                 'speed': self.state[agent]['speed'],
+                'trim': self.state[agent]['sail_trim'],
+                'trim_efficiency': trim_eff,
+                'trim_target': trim_target,
+                'trim_error': trim_error,
+                'vmg': vmg,
+                'vmg_norm': vmg_norm,
+                'leg': self.state[agent]['current_leg'],
                 'steps': self.step_count,
                 'steps_to_target': self.state[agent].get('steps_to_target', None),
-                'best_distance': self.best_distance[agent]
+                'best_distance': self.best_distance[agent],
+                'finished_race': finished_race,
+                'termination_reason': termination_reason,
+                'terminated': terminated,
+                'truncated': truncated,
             }
 
         # rimuovi agenti terminati dalla lista attiva
@@ -458,6 +602,11 @@ class ImprovedSailingEnv(ParallelEnv):
                 self.ax.text(bx + 18, by + 18,
                         f"{rudder_deg:+d}°",
                         fontsize=7, color=rudder_color, fontweight='bold')
+
+                trim_percent = int(self.state[agent].get('sail_trim', self.default_trim_level) * 100)
+                self.ax.text(bx + 18, by + 7,
+                    f"Trim:{trim_percent:02d}%",
+                    fontsize=7, color='navy', fontweight='bold')
         
         # Info UI
         ref_agent = self.possible_agents[0]
@@ -484,7 +633,9 @@ class ImprovedSailingEnv(ParallelEnv):
             self.ax.set_title(
                 f"{full_title}\n"
                 f"Leg: {self.state[ref_agent].get('current_leg', 1)}/2 | "
-                f"Speed: {self.state[ref_agent]['speed']:.1f} kts | Dist Y to Gate: {dist_to_gate:.0f}m",
+                f"Speed: {self.state[ref_agent]['speed']:.1f} kts | "
+                f"Trim: {self.state[ref_agent].get('sail_trim', self.default_trim_level) * 100:.0f}% | "
+                f"Dist Y to Gate: {dist_to_gate:.0f}m",
                 fontsize=10, weight='bold'
             )
 

@@ -42,8 +42,8 @@ Crea un file `.env` nella root del progetto (non viene tracciato da git):
 ```ini
 TOTAL_TIMESTEPS=500000
 N_ENVS=4
-MODEL_PATH=models/sailing_ppo_improved
-VIDEO_FILE=videos/sailing_demo.mp4
+MODEL_PATH=models/sailing_ppo_realistic_until100
+VIDEO_FILE=videos/sailing_realistic_until100.mp4
 TENSORBOARD_LOG=./sailing_tensorboard/
 ```
 
@@ -67,8 +67,10 @@ Assicurati di avere l'ambiente virtuale attivo (`source .venv/bin/activate`).
 
 ### Solo video (usa un modello già salvato)
 ```bash
-.venv/bin/python main.py --model-path models/sailing_ppo_improved --video-file videos/sailing_demo.mp4
+.venv/bin/python main.py --model-path models/sailing_ppo_realistic_until100 --video-file videos/sailing_realistic_until100.mp4
 ```
+
+> Nota compatibilità: se cambi observation/action space (es. introduzione trim vele), è consigliato rilanciare il training con `--train` per ottenere una policy pienamente coerente.
 
 ### Visualizzare le curve di training con TensorBoard
 ```bash
@@ -86,6 +88,7 @@ CoppaAmerica_multiagent/
 ├── train_ppo.py          # Training PPO con ambienti paralleli (SuperSuit + SB3)
 ├── evaluate_ppo.py       # Carica il modello e genera il video MP4
 ├── sailing_env.py        # Ambiente PettingZoo (logica di gioco, reward, render)
+├── sail_trim.py          # Modello aerodinamico semplificato del trim vele
 ├── wind_model.py         # Campo di vento 2D con random walk (modulo separato)
 ├── callbacks.py          # Callback SB3: traccia success rate e distanza media
 │
@@ -121,11 +124,52 @@ CoppaAmerica_multiagent/
 - [x] Callback metriche (`callbacks.py`)
 - [x] **Campo di vento 2D con random walk** (`wind_model.py`)
 - [ ] Waypoint/gate multipli (percorso di regata: bolina → boa → poppa → arrivo)
-- [ ] Azioni continue: angolo timone, trim vele, foil up/down
+- [~] Azioni continue: angolo timone, trim vele, foil up/down
 - [ ] Gestione foil (decollo/atterraggio in base a velocità)
 - [ ] Fase pre-partenza (countdown, entry timing, penalità anticipo)
 - [ ] Reward shaping: VMG (Velocity Made Good), efficienza virate
 - [ ] Rendering migliorato: frecce vento, gate, indicatore foil
+
+---
+
+## Trim vele (implementato)
+
+Da questa versione il controllo azioni e' continuo su due canali:
+
+- `action[0]`: timone in `[-1, 1]`
+- `action[1]`: trim vele in `[-1, 1]` (convertito internamente in livello trim `[0, 1]`)
+
+Dettagli implementativi principali:
+
+- rate limiter sul trim (la vela non puo' cambiare istantaneamente)
+- efficienza trim dipendente dal TWA (True Wind Angle)
+- penalita' per fuori-trim ad alta velocita'
+- tuning VMG esplicito su entrambe le gambe (bolina/poppa)
+- fallback automatico per modelli legacy con azione 1D (auto-trim)
+- rendering con indicatore `% trim` vicino a ogni barca
+- uscita dal campo: nessun rimbalzo; l'episodio termina con `termination_reason='out_of_bounds'`
+- successo episodio: valido solo con boa di bolina girata e arrivo al gate finale (`finished_race`)
+- stop training: il callback puo' interrompere automaticamente quando gli ultimi 100 episodi sono tutti successi per entrambi gli agenti
+
+### Metriche TensorBoard dedicate al trim
+
+Durante il training vengono loggate anche metriche tecniche aggiuntive:
+
+- `trim/<agent>_efficiency_mean`
+- `trim/<agent>_error_mean`
+- `vmg/<agent>_mean_kts`
+- `speed/<agent>_mean_kts`
+- `success/<agent>_rate`
+
+e aggregate globali (`trim/global_*`, `vmg/global_*`, `speed/global_*`, `success/global_rate`).
+
+### Mini test suite (shape + trim)
+
+Esegui i test automatici con:
+
+```bash
+.venv/bin/python -m unittest discover -s tests -p "test_*.py"
+```
 
 ### Fase 2 — Multi-agent (da iniziare dopo Fase 1)
 
@@ -144,3 +188,35 @@ CoppaAmerica_multiagent/
 - Prima di iniziare a lavorare: `git pull` e `source .venv/bin/activate`
 - Ogni nuova funzionalità va su una branch dedicata (`feature/nome-funzionalità`)
 - Per aggiungere dipendenze: aggiornare anche `requirements.txt` con `pip freeze > requirements.txt` (o aggiungere manualmente solo le nuove)
+
+### Novità Fisiche e di Regolamento
+
+- **Cancello di Bolina**: Per completare il primo lato (upwind), le barche devono obbligatoriamente attraversare *in mezzo* alle due boe del cancello prima di aggirarne una per scendere di poppa.
+- **Foiling**: Penalità ridotte per caduta dai foil ("drop foil") e per l'abuso di timone, favorendo manovre tattiche e virate ("tack") più strette e realistiche senza che l'agente preferisca uscire dai bordi del campo.
+
+### Scelta del Modello: Quale usare?
+
+Nella cartella `models/` troverai vari salvataggi, ma i due principali sono:
+- `sailing_ppo_improved.zip`: Modello legacy della versione precedente.
+- **`sailing_ppo_realistic_until100.zip` (CONSIGLIATO / DA USARE)**: È l'ultimo modello convergente e il più completo.
+
+**Perché ci sono due modelli e cosa cambia?**
+Il modello `realistic_until100` "capisce" le nuove regole geometriche del campo di regata e la nuova fisica. Ecco cosa è stato implementato esattamente in questo branch:
+1. **Cancello di Bolina Reale**: Per completare il primo lato (upwind), le barche ora devono obbligatoriamente attraversare *in mezzo* alle due boe del gate prima di aggirarne una e scendere di poppa (nel vecchio modello bastava superare l'asse Y e questo creava bug geometrici).
+2. **Foiling Ottimizzato**: Sono state ridotte le penalità catastrofiche per la caduta dal foil e l'uso brusco del timone. L'agente non ha più "paura" di virare, riducendo l'over-standing e favorendo manovre tattiche molto più verosimili.
+3. **Addestramento Perfetto**: L'addestramento usa un **Callback (Early Stopping)** customizzato in `callbacks.py` che interrompe il training in automatico solo ed esclusivamente quando le barche chiudono la regata con successo per **100 episodi consecutivi (100% success rate)**.
+
+### Come ri-addestrare (Parametri per i prossimi sviluppi in Multi-Agent)
+
+Se devi implementare nuove feature (ad esempio la visibilità tra barche per permettere l'evitamento collisioni) e hai bisogno di ri-addestrare l'agente, ecco come procedere.
+
+I migliori parametri che hanno portato alla creazione del modello "realistic_until100" sono:
+- **Strategia a Chunk (in `train_ppo.py`)**: L'addestramento valuta la rete a intervalli regolari e si ferma da solo se rileva 100 successi in un'unica finestra.
+- `total_timesteps=200000` (Spesso converge prima grazie allo stop automatico, tra i 120k e i 150k step).
+- `n_envs=12` (Usa quanti più ambienti paralleli riesci. 12 è essenziale per stabilizzare l'apprendimento su CPU, poiché evita che un random walk troppo instabile del vento rompa la policy distruggendo i progressi).
+
+Puoi lanciare il training perfetto direttamente tramite questa istruzione in Python:
+```python
+from train_ppo import train_model
+train_model(total_timesteps=200000, n_envs=12, model_path='models/mio_nuovo_test_collisioni')
+```
