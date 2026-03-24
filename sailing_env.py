@@ -344,6 +344,31 @@ class ImprovedSailingEnv(ParallelEnv):
             self.state[agent]['y'] += displacement * np.sin(self.state[agent]['heading'])
 
             self.trajectory[agent].append(np.array([self.state[agent]['x'], self.state[agent]['y']]))
+            
+            collision_radius = 20.0
+
+            for i, agent_a in enumerate(self.agents):
+                pos_a = np.array([self.state[agent_a]['x'], self.state[agent_a]['y']])
+                for agent_b in self.agents[i+1:]:
+                    pos_b = np.array([self.state[agent_b]['x'], self.state[agent_b]['y']])
+                    dist_vec = pos_a - pos_b
+                    dist = np.linalg.norm(dist_vec)
+                    
+                    if dist < collision_radius and dist > 1e-6:
+                        # Penalità chiara e proporzionale
+                        penalty = (collision_radius - dist) / collision_radius * 20.0
+                        rewards.setdefault(agent_a, 0.0)
+                        rewards.setdefault(agent_b, 0.0)
+                        rewards[agent_a] -= penalty
+                        rewards[agent_b] -= penalty
+
+                        # Leggero spostamento per evitare sovrapposizione
+                        overlap = collision_radius - dist
+                        correction = (overlap / 2.0) * (dist_vec / dist)
+                        self.state[agent_a]['x'] += correction[0]
+                        self.state[agent_a]['y'] += correction[1]
+                        self.state[agent_b]['x'] -= correction[0]
+                        self.state[agent_b]['y'] -= correction[1]
 
             # distanza dal target
             pos = np.array([self.state[agent]['x'], self.state[agent]['y']])
