@@ -2,7 +2,7 @@ import os
 import numpy as np
 import imageio
 from stable_baselines3 import PPO
-from sailing_env import ImprovedSailingEnv
+from env_sailing_env import ImprovedSailingEnv
 
 
 def _adapt_obs_for_model(obs_vector: np.ndarray, expected_dim: int) -> np.ndarray:
@@ -57,11 +57,10 @@ def create_video(model_path="models/sailing_ppo_improved", filename='videos/sail
     best_dist_dict = {agent: float('inf') for agent in env.possible_agents}
 
     while step < env.max_steps:
-        actions = {}
-        for agent in env.agents:
-            if agent in obs_array_dict:
-                action, _ = model.predict(obs_array_dict[agent], deterministic=True)
-                actions[agent] = action[0]
+        actions = {
+            agent: model.predict(obs_array_dict[agent], deterministic=True)[0][0]
+            for agent in env.agents if agent in obs_array_dict
+        }
 
         # Se tutte le barche hanno raggiunto il target, termina il loop
         if not actions:
