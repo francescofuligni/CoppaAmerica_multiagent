@@ -148,8 +148,33 @@ Dettagli implementativi principali:
 - fallback automatico per modelli legacy con azione 1D (auto-trim)
 - rendering con indicatore `% trim` vicino a ogni barca
 - uscita dal campo: nessun rimbalzo; l'episodio termina con `termination_reason='out_of_bounds'`
-- successo episodio: valido solo con boa di bolina girata e arrivo al gate finale (`finished_race`)
+- successo episodio: valido solo con boa di bolina girata, gate di arrivo, e giro finale (`finished_race`)
 - stop training: il callback puo' interrompere automaticamente quando gli ultimi 100 episodi sono tutti successi per entrambi gli agenti
+
+#### Percorso di regata: 3 leg
+
+La regata è strutturata in tre fasi (leg):
+
+1. **Leg 1 (Bolina)**: Sali verso il Top Gate (Y=2300m)
+   - Barca parte dal basso (Y≈0-100m) e deve risalire contro il vento
+   - Deve attraversare il gate (passando tra le due boe) nella Y ≥ 2300m
+   - Gate: ampiezza 300m, centrato nel campo
+
+2. **Leg 2 (Poppa)**: Scendi verso il Bottom Gate (Y=200m)
+   - Dopo aver completato Leg 1, la barca gira attorno a una boa
+   - Retrocede verso il basso con vento in poppa
+   - Deve attraversare il gate della linea di arrivo (Y ≤ 200m)
+
+3. **Leg 3 (Giro finale)**: Giro attorno alla boa di arrivo
+   - Dopo aver attraversato il Bottom Gate, la barca deve compiere un giro finale attorno alla boa di arrivo
+   - La barca ha un target esterno fissato che la obbliga a fare una curva completa intorno alla boa
+   - Durante **Leg 3, la spin violation è disabilitata** perché il giro è una parte legittima della regata
+   - Una volta completato il giro (raggiunto il target esterno), l'episodio termina con successo (`finished_race`)
+
+**Implicazioni per l'RL**:
+- Il giro del Leg 3 non è una manovra erratica, bensì una fase della regata vera e propria
+- Gli agenti imparano a girare in modo controllato attorno alla boa senza essere penalizzati
+- La rotazione completa durante il Leg 3 non attiva il vincolo di "spin violation"
 
 ### Metriche TensorBoard dedicate al trim
 
@@ -173,12 +198,12 @@ Esegui i test automatici con:
 
 ### Fase 2 — Multi-agent (da iniziare dopo Fase 1)
 
-- [ ] Aggiungere `boat_1` in `sailing_env.py`
-- [ ] Osservazione relativa dell'avversario nell'observation space
-- [ ] Regole: diritto di precedenza (mura destra/sinistra), boundary box, penalità collisione
-- [ ] Reward competitivo (vantaggio tattico, copertura vento)
-- [ ] Self-play training
-- [ ] Metriche separate per agente in `callbacks.py`
+- [x] Aggiungere `boat_1` in `sailing_env.py`
+- [x] Osservazione relativa dell'avversario nell'observation space
+- [x] Regole: diritto di precedenza (mura destra/sinistra), boundary box, penalità collisione
+- [x] Reward competitivo (vantaggio tattico, copertura vento)
+- [x] Self-play training
+- [x] Metriche separate per agente in `callbacks.py`
 
 ---
 
@@ -193,6 +218,28 @@ Esegui i test automatici con:
 
 - **Cancello di Bolina**: Per completare il primo lato (upwind), le barche devono obbligatoriamente attraversare *in mezzo* alle due boe del cancello prima di aggirarne una per scendere di poppa.
 - **Foiling**: Penalità ridotte per caduta dai foil ("drop foil") e per l'abuso di timone, favorendo manovre tattiche e virate ("tack") più strette e realistiche senza che l'agente preferisca uscire dai bordi del campo.
+
+### Aggiornamento Fase 2 (Collisioni e Competizione)
+
+- Collisioni multi-barca con penalità su contatto (`collision_radius`) e separazione simmetrica anti-overlap.
+- Penalità di prossimità (`near_collision_radius`) per insegnare avoidance prima dell'impatto.
+- Penalità predittiva `time-to-collision` (TTC) quando due traiettorie convergono rapidamente.
+- Regola di precedenza semplificata su mure opposte (mura sinistra più penalizzata in collisione).
+- Reward competitivo sul distacco tattico tra barche.
+- Nuove metriche TensorBoard per collisioni (`collision/*`, `collision/global_*`).
+
+### Hard Violations (Penalità severe)
+
+Il sistema di penalità include un meccanismo di "hard rules" per prevenire comportamenti irrealistici:
+
+- **`boundary_violation`**: Uscita dal campo X (< 500m o > 2000m) → termina episodio con penalità -10,000
+- **`out_of_bounds`**: Uscita totale dal campo → termina episodio con penalità -10,000
+- **`collision`**: Contatto diretto tra barche (raggio < 20m) → termina episodio con penalità -10,000
+- **`missed_top_gate`**: Attraversamento linea top gate (Y ≥ 2300m) fuori dal cancello → termina episodio con penalità -10,000
+- **`spin_violation`**: Rotazione > 450° in 30 step senza progresso → termina episodio con penalità -10,000
+  - **ECCEZIONE**: Disabilitato durante **Leg 3** (giro finale attorno boa di arrivo), quando la rotazione è parte legittima della regata
+
+**Warmup meccanismo**: Le hard rules hanno un periodo di riscaldamento (`hard_rules_warmup_steps=20,000`) per permettere l'esplorazione iniziale dell'agente senza penalizzazione catastrofica.
 
 ### Scelta del Modello: Quale usare?
 
@@ -219,4 +266,22 @@ Puoi lanciare il training perfetto direttamente tramite questa istruzione in Pyt
 ```python
 from train_ppo import train_model
 train_model(total_timesteps=200000, n_envs=12, model_path='models/mio_nuovo_test_collisioni')
+```
+
+### Preset PPO (integrazione sicura)
+
+Il training supporta ora due preset PPO per continuare il progetto senza rompere la compatibilità:
+
+- `ppo_preset='safe_optimized'` (default): rollout più lungo e batch più robusto.
+- `ppo_preset='legacy'`: mantiene i parametri storici.
+
+Esempio:
+```python
+from train_ppo import train_model
+train_model(
+	total_timesteps=200000,
+	n_envs=12,
+	model_path='models/mio_nuovo_test_collisioni',
+	ppo_preset='safe_optimized',
+)
 ```
