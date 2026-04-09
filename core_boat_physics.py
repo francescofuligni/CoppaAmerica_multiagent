@@ -114,12 +114,10 @@ def compute_polar_speed(
             speed_ratio = 2.5 + (angle_deg - 55) * 0.024
         elif angle_deg < 140:
             speed_ratio = 3.6 + (angle_deg - 100) * 0.015
-        elif angle_deg < 155:
-            # Drop brutale dopo i 140 gradi per penalizzare pesantemente chi tenta la poppa dritta (VMG crolla)
-            speed_ratio = 4.2 - (angle_deg - 140) * 0.08
+        elif angle_deg < 170:
+            speed_ratio = 4.2 - (angle_deg - 140) * 0.03 # Raggiungono un picco ma calano dopo i 140
         else:
-            # Oltre i 155 i foil stallano matematicamente! Niente poppa filata per gli AC75.
-            speed_ratio = 3.0 - (angle_deg - 155) * 0.1
+            speed_ratio = 3.3 - (angle_deg - 170) * 0.25 # Stalla se va completamente in poppa filata per l'ombra
     else:
         # Displacement: rotta in acqua, l'andatura di poppa funziona ma è molto più lenta
         if angle_deg < 35:
