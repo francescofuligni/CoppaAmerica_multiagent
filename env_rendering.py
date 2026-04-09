@@ -44,8 +44,8 @@ class SailingRenderer:
 
         self.fig.clf()  # Clear memory ad ogni frame
         self.ax = self.fig.add_subplot(111)
-        self.ax.set_xlim(0, self.env.field_size)
-        self.ax.set_ylim(0, self.env.field_size)
+        self.ax.set_xlim(0, self.env.field_width)
+        self.ax.set_ylim(0, self.env.field_length)
         self.ax.set_aspect('equal')
         self.ax.grid(True, alpha=0.3)
         self.ax.set_facecolor('#a0d8ef')
@@ -63,11 +63,11 @@ class SailingRenderer:
         # --- Disegna Boundaries Esterne (Confini penalità) ---
         self.ax.plot(
             [self.env.boundaries['x_min'], self.env.boundaries['x_min']], 
-            [0, self.env.field_size], 'r--', linewidth=2, alpha=0.5, label='Boundary'
+            [0, self.env.field_length], 'r--', linewidth=2, alpha=0.5, label='Boundary'
         )
         self.ax.plot(
             [self.env.boundaries['x_max'], self.env.boundaries['x_max']], 
-            [0, self.env.field_size], 'r--', linewidth=2, alpha=0.5
+            [0, self.env.field_length], 'r--', linewidth=2, alpha=0.5
         )
 
         # --- Disegna Gates (Cancelli virtuali e Boe fisiche) ---
@@ -113,25 +113,26 @@ class SailingRenderer:
                 boat = patches.Polygon(boat_points, closed=True, facecolor=boat_color, edgecolor=boat_edge, linewidth=2)
                 self.ax.add_patch(boat)
 
-                # Active foil text indication (telemetria visiva sopra la barca)
+                # Dati raggruppati per l'HUD esterno
                 foil_side = "Port" if self.env.state[agent].get('active_foil', 1.0) == 1.0 else "Stbd"
                 foil_str = f"FOILING ({foil_side})" if is_foiling else f"HULL ({foil_side})"
-                self.ax.text(bx, by - 25, foil_str, fontsize=8, color='magenta', fontweight='bold', ha='center')
-
-                # Distanze, passi
+                
                 dist = np.linalg.norm(np.array([bx, by]) - self.env.target[agent])
                 steps = self.env.state[agent].get('steps_to_target', self.env.step_count)
-                info_lines.append(f"{agent}: {dist:.0f}m ({steps}stp)")
-
-                # Timone
+                
                 rudder_input = self.env.state[agent].get('rudder_angle', 0.0)
                 rudder_deg = int(rudder_input * 25)
-                rudder_color = 'red' if abs(rudder_input) > 0.5 else 'black'
-                self.ax.text(bx + 18, by + 18, f"{rudder_deg:+d}°", fontsize=7, color=rudder_color, fontweight='bold')
-
-                # Trim Vele
+                
                 trim_percent = int(self.env.state[agent].get('sail_trim', self.env.default_trim_level) * 100)
-                self.ax.text(bx + 18, by + 7, f"Trim:{trim_percent:02d}%", fontsize=7, color='navy', fontweight='bold')
+                
+                speed = self.env.state[agent]['speed']
+                info_lines.append(
+                    f"{agent_color.upper()}:\n"
+                    f" Spd: {speed:.1f}kts\n"
+                    f" Dst: {dist:.0f}m ({steps})\n"
+                    f" Mod: {foil_str}\n"
+                    f" Tr:  {trim_percent}% | Rud: {rudder_deg:+d}°\n"
+                )
 
         # --- Box Informativi UI Superiore ---
         ref_agent = self.env.possible_agents[0]
@@ -148,34 +149,24 @@ class SailingRenderer:
                 winner_agent = min(finished_agents, key=finished_agents.get)
                 winner_text = f"WIN: {winner_agent} | "
 
-            full_title = winner_text + " | ".join(info_lines)
-
             # Titolo principale (telemetria HUD)
             self.ax.set_title(
-                f"{full_title}\n"
+                f"{winner_text}Race Progress\n"
                 f"Leg: {self.env.state[ref_agent].get('current_leg', 1)}/2 | "
-                f"Speed: {self.env.state[ref_agent]['speed']:.1f} kts | "
-                f"Trim: {self.env.state[ref_agent].get('sail_trim', self.env.default_trim_level) * 100:.0f}% | "
                 f"Dist Y to Gate: {dist_to_gate:.0f}m",
                 fontsize=10, weight='bold'
             )
 
-            # Box Info Vento Numeriche
-            wind_text = (
-                f"Wind (base)\n"
-                f"Dir: {(90 - np.degrees(self.env.wind_field.base_direction)) % 360:.0f}\u00b0\n"
-                f"Speed: {self.env.wind_field.base_speed:.1f} kts\n"
-                f"\nWind (local @ boat)\n"
-                f"Dir: {wind_deg:.0f}°\n"
-                f"Speed: {local_ws:.1f} kts"
-            )
-            self.ax.text(
-                0.02, 0.98, wind_text,
-                transform=self.ax.transAxes,
-                fontsize=8, verticalalignment='top',
-                bbox=dict(boxstyle='round,pad=0.4', facecolor='lightyellow', alpha=0.85, edgecolor='gray'),
+            # Box Info Barche (sotto la bussola del vento)
+            telemetry_text = "\n".join(info_lines)
+            self.fig.text(
+                0.78, 0.77, telemetry_text,
+                fontsize=7, verticalalignment='top', horizontalalignment='left',
+                bbox=dict(boxstyle='round,pad=0.4', facecolor='white', alpha=0.85, edgecolor='gray'),
                 family='monospace'
             )
+
+
 
             # Rosa Dei Venti Inset Grafico
             inset_ax = self.fig.add_axes([0.78, 0.78, 0.16, 0.16], polar=True)

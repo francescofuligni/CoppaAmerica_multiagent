@@ -43,11 +43,12 @@ class ImprovedSailingEnv(ParallelEnv):
     """
     metadata = {'render_modes': ['rgb_array'], "name": "sailing_v0"}
 
-    def __init__(self, field_size: int = 2500, render_mode: Optional[str] = None):
+    def __init__(self, render_mode: Optional[str] = None):
         super().__init__()
         
         # Geometria e Fisica Base
-        self.field_size = field_size
+        self.field_length = 4075.0
+        self.field_width = 1482.0
         self.max_speed = 50.0  # Incrementata per foiling
         self.max_wind = 30.0
         self.target_radius = 50.0  # Piccolo per precisione
@@ -80,9 +81,9 @@ class ImprovedSailingEnv(ParallelEnv):
         self.foiling_drop_speed = 15.0     
 
         # Costanti del Campo di Regata (Windward-Leeward)
-        self.course_center_x = self.field_size / 2.0
-        self.boundaries = {'x_min': 500.0, 'x_max': 2000.0}
-        self.top_gate_y = 2300.0
+        self.course_center_x = self.field_width / 2.0
+        self.boundaries = {'x_min': 0.0, 'x_max': self.field_width}
+        self.top_gate_y = self.field_length - 200.0
         self.bottom_gate_y = 200.0
         self.gate_width = 300.0
 
@@ -100,7 +101,7 @@ class ImprovedSailingEnv(ParallelEnv):
         # Stato globale e moduli esterni
         self.state = {}
         self.target = {}
-        self.wind_field = WindField(field_size=field_size)
+        self.wind_field = WindField(field_size=int(max(self.field_width, self.field_length)))
         self.renderer = SailingRenderer(self)
         self.step_count = 0
         self.trajectory = {}
@@ -210,13 +211,13 @@ class ImprovedSailingEnv(ParallelEnv):
             apparent_wind -= 2 * np.pi
         
         obs = np.array([
-            self.state[agent]['x'] / self.field_size,
-            self.state[agent]['y'] / self.field_size,
+            self.state[agent]['x'] / self.field_width,
+            self.state[agent]['y'] / self.field_length,
             self.state[agent]['speed'] / self.max_speed,
             np.sin(heading), np.cos(heading),
             np.sin(apparent_wind), np.cos(apparent_wind),
             local_wind_speed / self.max_wind,
-            dist_to_target / (self.field_size * np.sqrt(2)),
+            dist_to_target / (np.sqrt(self.field_width**2 + self.field_length**2)),
             np.sin(rel_bearing), np.cos(rel_bearing),
             float(self.state[agent]['rudder_angle']),
             trim_level_to_action(self.state[agent]['sail_trim']),
@@ -347,43 +348,34 @@ class ImprovedSailingEnv(ParallelEnv):
 
             self.trajectory[agent].append(np.array([self.state[agent]['x'], self.state[agent]['y']]))
 
+            reward = rewards.get(agent, 0.0)
+            terminated = False
+            truncated = False
+            self.state[agent]['termination_reason'] = None
+
             # -----------------------------------------------------------------
             # [4] Collisioni e Interazioni Multi-Agent
             # -----------------------------------------------------------------
             collision_radius = 20.0
-            for i, agent_a in enumerate(self.agents):
-                for agent_b in self.agents[i+1:]:
+            for other_agent in self.agents:
+                if other_agent != agent:
                     dist_vec = np.array([
-                        self.state[agent_a]['x'] - self.state[agent_b]['x'],
-                        self.state[agent_a]['y'] - self.state[agent_b]['y']
+                        self.state[agent]['x'] - self.state[other_agent]['x'],
+                        self.state[agent]['y'] - self.state[other_agent]['y']
                     ])
                     dist = float(np.linalg.norm(dist_vec))
                     
                     if 1e-6 < dist < collision_radius:
-                        # Penalità chiara e forza di spinta (elastic bounce)
-                        penalty = (collision_radius - dist) / collision_radius * 20.0
-                        rewards.setdefault(agent_a, 0.0)
-                        rewards.setdefault(agent_b, 0.0)
-                        rewards[agent_a] -= penalty
-                        rewards[agent_b] -= penalty
-
-                        overlap = collision_radius - dist
-                        correction = (overlap / 2.0) * (dist_vec / dist)
-                        self.state[agent_a]['x'] += correction[0]
-                        self.state[agent_a]['y'] += correction[1]
-                        self.state[agent_b]['x'] -= correction[0]
-                        self.state[agent_b]['y'] -= correction[1]
+                        # Constraint rigido per collisione
+                        reward -= 10000.0
+                        terminated = True
+                        self.state[agent]['termination_reason'] = 'collision'
 
             # -----------------------------------------------------------------
             # [5] Reward Shaping (Motori di spinta per la policy)
             # -----------------------------------------------------------------
             pos = np.array([self.state[agent]['x'], self.state[agent]['y']])
             dist_to_target = float(np.linalg.norm(pos - self.target[agent]))
-
-            reward = rewards.get(agent, 0.0) # Accumula con eventuale collision
-            terminated = False
-            truncated = False
-            self.state[agent]['termination_reason'] = None
             
             # Progress Reward
             distance_delta = prev_dist - dist_to_target
@@ -447,13 +439,9 @@ class ImprovedSailingEnv(ParallelEnv):
             bx = self.state[agent]['x']
             by = self.state[agent]['y']
             
-            # Soft Boundaries
-            if bx < self.boundaries['x_min'] or bx > self.boundaries['x_max']:
-                reward -= 12.0
-                
-            # Hard Out of bounds
-            if bx < 0 or bx > self.field_size or by < 0 or by > self.field_size:
-                reward -= 260.0
+            # Hard Out of bounds (Dashed Lines / Edge of field)
+            if bx < self.boundaries['x_min'] or bx > self.boundaries['x_max'] or by < 0 or by > self.field_length:
+                reward -= 10000.0
                 terminated = True
                 self.state[agent]['termination_reason'] = 'out_of_bounds'
 

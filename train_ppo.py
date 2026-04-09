@@ -1,6 +1,7 @@
 import os
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import VecMonitor
+from stable_baselines3.common.callbacks import CheckpointCallback, CallbackList
 import supersuit as ss
 
 # Importazioni Locali
@@ -42,30 +43,44 @@ def train_model(
     
     train_env = VecMonitor(env)
     
-    # 2. Creazione del Modello PPO
-    print("\n2. Creating PPO model...")
-    # Keep rollout size stable and divisible by batch_size across different n_envs.
+    # 2. Creazione/Caricamento del Modello PPO
     rollout_steps_per_env = 256
-
-    model = PPO(
-        "MlpPolicy",
-        train_env,
-        device='cpu',
-        learning_rate=2e-4,
-        n_steps=rollout_steps_per_env,
-        batch_size=256,
-        n_epochs=10,
-        gamma=0.99,
-        gae_lambda=0.95,
-        clip_range=0.2,
-        ent_coef=0.01,
-        verbose=0,
-        tensorboard_log="./sailing_tensorboard/"
-    )
+    
+    if os.path.exists(model_path + ".zip"):
+        print(f"\n2. Recuparato file esistente! Riprendo l'addestramento da '{model_path}.zip'...")
+        model = PPO.load(
+            model_path,
+            env=train_env,
+            device='cpu',
+            custom_objects={
+                "learning_rate": 2e-4,
+                "n_steps": rollout_steps_per_env,
+                "batch_size": 256,
+                "n_epochs": 10,
+                "tensorboard_log": "./sailing_tensorboard/"
+            }
+        )
+    else:
+        print("\n2. Creating NEW PPO model...")
+        model = PPO(
+            "MlpPolicy",
+            train_env,
+            device='cpu',
+            learning_rate=2e-4,
+            n_steps=rollout_steps_per_env,
+            batch_size=256,
+            n_epochs=10,
+            gamma=0.99,
+            gae_lambda=0.95,
+            clip_range=0.2,
+            ent_coef=0.01,
+            verbose=0,
+            tensorboard_log="./sailing_tensorboard/"
+        )
     
     # 3. Setup Callback
     callback_check_freq = max(1, 10000 // max(1, n_envs * agents_per_env))
-    callback = SuccessTrackingCallback(
+    success_callback = SuccessTrackingCallback(
         verbose=1,
         check_freq=callback_check_freq,
         window_size=200,
@@ -73,6 +88,14 @@ def train_model(
         expected_agents=["red_boat", "blue_boat"],
         stop_on_perfect_window=True,
     )
+    
+    checkpoint_callback = CheckpointCallback(
+        save_freq=50000 // n_envs,
+        save_path='./models/checkpoints/',
+        name_prefix='sailing_model_ckpt'
+    )
+    
+    callback = CallbackList([success_callback, checkpoint_callback])
     
     # 4. Avvio Training
     print(f"\n4. Training for {total_timesteps} steps...")
@@ -82,18 +105,21 @@ def train_model(
 
     chunks_run = 0
 
-    while not callback.goal_reached and (max_chunks is None or chunks_run < max_chunks):
-        model.learn(total_timesteps=chunk_timesteps, callback=callback, reset_num_timesteps=False)
-        chunks_run += 1
-        if max_chunks is None:
-            print(f"[Training] Completed chunk {chunks_run} (chunk_timesteps={chunk_timesteps})")
-        else:
-            print(f"[Training] Completed chunk {chunks_run}/{max_chunks} (chunk_timesteps={chunk_timesteps})")
+    try:
+        while not success_callback.goal_reached and (max_chunks is None or chunks_run < max_chunks):
+            model.learn(total_timesteps=chunk_timesteps, callback=callback, reset_num_timesteps=False)
+            chunks_run += 1
+            if max_chunks is None:
+                print(f"[Training] Completed chunk {chunks_run} (chunk_timesteps={chunk_timesteps})")
+            else:
+                print(f"[Training] Completed chunk {chunks_run}/{max_chunks} (chunk_timesteps={chunk_timesteps})")
+    except KeyboardInterrupt:
+        print("\n\n[Training] Interrotto manualmente dall'utente (Ctrl+C). Procedo al salvataggio finale del modello...")
 
-    if callback.goal_reached:
+    if success_callback.goal_reached:
         print("[Training] Stopped automatically after perfect recent success window.")
     else:
-        print("[Training] Reached configured max_chunks before perfect recent success window.")
+        print("[Training] Training ended (either manually interrupted or max_chunks reached).")
     
     # 5. Salvataggio Modello
     model.save(model_path)
