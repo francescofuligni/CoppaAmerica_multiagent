@@ -13,6 +13,7 @@ def train_model(
     model_path="models/sailing_ppo_improved",
     chunk_timesteps=None,
     max_chunks=None,
+    ppo_preset="safe_optimized",
 ):
     """
     Funzione principale di training con supporto PARALLELISMO per PettingZoo tramite SuperSuit.
@@ -44,18 +45,40 @@ def train_model(
     
     # 2. Creazione del Modello PPO
     print("\n2. Creating PPO model...")
-    # Keep rollout size stable and divisible by batch_size across different n_envs.
-    rollout_steps_per_env = 256
+
+    # Preset PPO compatibili: "legacy" mantiene i parametri storici,
+    # "safe_optimized" integra tuning più robusto senza cambiare API del progetto.
+    ppo_presets = {
+        "legacy": {
+            "learning_rate": 2e-4,
+            "n_steps": 256,
+            "batch_size": 256,
+            "gamma": 0.99,
+        },
+        "safe_optimized": {
+            "learning_rate": 3e-4,
+            "n_steps": 1024,
+            "batch_size": 512,
+            "gamma": 0.995,
+        },
+    }
+
+    if ppo_preset not in ppo_presets:
+        valid = ", ".join(sorted(ppo_presets))
+        raise ValueError(f"Unknown ppo_preset '{ppo_preset}'. Valid values: {valid}")
+
+    ppo_cfg = ppo_presets[ppo_preset]
+    print(f"   Using PPO preset: {ppo_preset}")
 
     model = PPO(
         "MlpPolicy",
         train_env,
         device='cpu',
-        learning_rate=2e-4,
-        n_steps=rollout_steps_per_env,
-        batch_size=256,
+        learning_rate=ppo_cfg["learning_rate"],
+        n_steps=ppo_cfg["n_steps"],
+        batch_size=ppo_cfg["batch_size"],
         n_epochs=10,
-        gamma=0.99,
+        gamma=ppo_cfg["gamma"],
         gae_lambda=0.95,
         clip_range=0.2,
         ent_coef=0.01,

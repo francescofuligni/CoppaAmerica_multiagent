@@ -35,6 +35,11 @@ class SuccessTrackingCallback(BaseCallback):
         self.trim_error_window = {}
         self.vmg_window = {}
         self.speed_window = {}
+        self.collision_penalty_window = {}
+        self.near_collision_penalty_window = {}
+        self.ttc_penalty_window = {}
+        self.rounding_penalty_window = {}
+        self.termination_reason_counts = {}
 
     def _ensure_agent_buffers(self, agent: str) -> None:
         if agent in self.episode_successes:
@@ -46,6 +51,11 @@ class SuccessTrackingCallback(BaseCallback):
         self.trim_error_window[agent] = []
         self.vmg_window[agent] = []
         self.speed_window[agent] = []
+        self.collision_penalty_window[agent] = []
+        self.near_collision_penalty_window[agent] = []
+        self.ttc_penalty_window[agent] = []
+        self.rounding_penalty_window[agent] = []
+        self.termination_reason_counts[agent] = {}
 
     def _append_rolling(self, buffer, value: float) -> None:
         buffer.append(value)
@@ -64,6 +74,14 @@ class SuccessTrackingCallback(BaseCallback):
             self._append_rolling(self.vmg_window[agent], float(agent_info['vmg']))
         if 'speed' in agent_info:
             self._append_rolling(self.speed_window[agent], float(agent_info['speed']))
+        if 'collision_penalty' in agent_info:
+            self._append_rolling(self.collision_penalty_window[agent], float(agent_info['collision_penalty']))
+        if 'near_collision_penalty' in agent_info:
+            self._append_rolling(self.near_collision_penalty_window[agent], float(agent_info['near_collision_penalty']))
+        if 'ttc_penalty' in agent_info:
+            self._append_rolling(self.ttc_penalty_window[agent], float(agent_info['ttc_penalty']))
+        if 'rounding_penalty' in agent_info:
+            self._append_rolling(self.rounding_penalty_window[agent], float(agent_info['rounding_penalty']))
 
         # Conta episodio solo in evento finale.
         is_terminal = bool(agent_info.get('terminated', False) or agent_info.get('truncated', False))
@@ -79,6 +97,8 @@ class SuccessTrackingCallback(BaseCallback):
         self.episode_successes[agent].append(success)
         self.episode_distances[agent].append(final_dist)
         self.n_episodes[agent] += 1
+        reason = str(agent_info.get('termination_reason', 'unknown'))
+        self.termination_reason_counts[agent][reason] = self.termination_reason_counts[agent].get(reason, 0) + 1
 
         # Mantieni solo ultime N ep (N = max finestra metriche e finestra obiettivo)
         keep_n = max(100, self.success_window)
@@ -150,6 +170,10 @@ class SuccessTrackingCallback(BaseCallback):
             global_vmg = []
             global_speed = []
             global_success_rates = []
+            global_collision_penalty = []
+            global_near_collision_penalty = []
+            global_ttc_penalty = []
+            global_rounding_penalty = []
 
             for agent in sorted(self.episode_successes):
                 n_recent = len(self.episode_successes[agent])
@@ -183,6 +207,28 @@ class SuccessTrackingCallback(BaseCallback):
                     speed_mean = float(np.mean(self.speed_window[agent]))
                     global_speed.append(speed_mean)
                     self.logger.record(f"speed/{agent}_mean_kts", speed_mean)
+                if self.collision_penalty_window[agent]:
+                    col_mean = float(np.mean(self.collision_penalty_window[agent]))
+                    global_collision_penalty.append(col_mean)
+                    self.logger.record(f"collision/{agent}_penalty_mean", col_mean)
+                if self.near_collision_penalty_window[agent]:
+                    near_mean = float(np.mean(self.near_collision_penalty_window[agent]))
+                    global_near_collision_penalty.append(near_mean)
+                    self.logger.record(f"collision/{agent}_near_penalty_mean", near_mean)
+                if self.ttc_penalty_window[agent]:
+                    ttc_mean = float(np.mean(self.ttc_penalty_window[agent]))
+                    global_ttc_penalty.append(ttc_mean)
+                    self.logger.record(f"collision/{agent}_ttc_penalty_mean", ttc_mean)
+                if self.rounding_penalty_window[agent]:
+                    rounding_mean = float(np.mean(self.rounding_penalty_window[agent]))
+                    global_rounding_penalty.append(rounding_mean)
+                    self.logger.record(f"rounding/{agent}_penalty_mean", rounding_mean)
+
+                if self.termination_reason_counts[agent]:
+                    total_terms = max(1, sum(self.termination_reason_counts[agent].values()))
+                    for reason, count in self.termination_reason_counts[agent].items():
+                        ratio = float(count) / float(total_terms)
+                        self.logger.record(f"termination/{agent}_{reason}_ratio", ratio)
 
             if global_trim_eff:
                 self.logger.record("trim/global_efficiency_mean", float(np.mean(global_trim_eff)))
@@ -194,6 +240,14 @@ class SuccessTrackingCallback(BaseCallback):
                 self.logger.record("speed/global_mean_kts", float(np.mean(global_speed)))
             if global_success_rates:
                 self.logger.record("success/global_rate", float(np.mean(global_success_rates)))
+            if global_collision_penalty:
+                self.logger.record("collision/global_penalty_mean", float(np.mean(global_collision_penalty)))
+            if global_near_collision_penalty:
+                self.logger.record("collision/global_near_penalty_mean", float(np.mean(global_near_collision_penalty)))
+            if global_ttc_penalty:
+                self.logger.record("collision/global_ttc_penalty_mean", float(np.mean(global_ttc_penalty)))
+            if global_rounding_penalty:
+                self.logger.record("rounding/global_penalty_mean", float(np.mean(global_rounding_penalty)))
 
             print(f"{'='*70}\n")
 
