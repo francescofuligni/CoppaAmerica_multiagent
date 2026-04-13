@@ -134,7 +134,7 @@ def create_multi_video(
     print("=" * 70)
 
     for i in range(1, 4):
-        fname = os.path.join(output_dir, f"test_{i}_regata.mp4")
+        fname = os.path.join(output_dir, f"test_{i}.mp4")
         print(f"\n--- Test {i}/3: Regata standard (Seed casuale {42 + i}) ---")
         create_video(model_path=model_path, filename=fname, seed=42 + i)
 

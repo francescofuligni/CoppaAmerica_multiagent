@@ -53,26 +53,41 @@ Un template è già incluso come `.env.example` (quando lo creerete).
 
 ## Avvio
 
-Assicurati di avere l'ambiente virtuale attivo (`source .venv/bin/activate`).
+Assicurati di avere l'ambiente virtuale attivo (`source .venv/bin/activate`). Il sistema di CLI scarica automaticamente parametri come passi e setup tramite il file `config.yaml` nella root, e include ora un **sistema di versionamento automatico** intelligente per gestire i training (es. produrrà in automatico `sailing_model.zip`, poi `sailing_model_2.zip`, ecc).
 
-### Training + video (default)
+### Configurazione (Centralizzazione in config.yaml)
+Tutti i parametri nevralgici dell'Intelligenza Artificiale (learning rate, early stopping percentuale) e della Fisica (inerzia navale) sono **governati dal file `config.yaml`**. 
+In questo modo puoi cambiare liberamente il setup per la sessione, e la repository rimarrà pulita da numeri scritti a file hardcoded. Modifica semplicemente il file per decidere quanti step o ambienti lanciare.
+
+### Creare un NUOVO Modello (Consigliato all'inizio e dopo modifiche logiche)
+Addestra un modello da zero. Questa opzione crea automaticamente la versione numerata successiva per non sovrascrivere il lavoro precedente, e "fa le pulizie" eliminando i checkpoint temporanei residui. I parametri `--steps` e `--n-envs` vengono letti dal config, quindi il comando è estremamente snello:
 ```bash
-.venv/bin/python main.py
+.venv/bin/python main.py --train-new
 ```
 
-### Solo training (forza il ricalcolo anche se il modello esiste già)
+### Riprendere il Training dell'Ultimo Modello
+Se il training si è interrotto prima della fine o se vuoi prolungarne la durata, riprendi da dove avevi lasciato. Riprende in automatico l'ultimo modello numerato generato, senza toccare le cartelle storiche. 
 ```bash
-.venv/bin/python main.py --train --steps 500000 --n-envs 4
+.venv/bin/python main.py --train-resume
 ```
 
-### Solo video (usa un modello già salvato)
+### Generazione video (Usa in automatico l'ultimo modello)
+Per generare un video `.mp4` del comportamento attuale, lancia semplicemente il programma. Ricerca da sé la versione più recente del modello.
 ```bash
-.venv/bin/python main.py --model-path models/sailing_ppo_realistic_until100 --video-file videos/sailing_realistic_until100.mp4
+.venv/bin/python main.py --video-file videos/sailing_demo.mp4
 ```
 
-> Nota compatibilità: se cambi observation/action space (es. introduzione trim vele), è consigliato rilanciare il training con `--train` per ottenere una policy pienamente coerente.
+### Generazione video Multiplo (MULTI-VENTO)
+Genera 3 setup di gara (con 3 seed sequenziali) usando sempre la versione più recente della AI:
+```bash
+.venv/bin/python main.py --test-multi
+```
+
+> **Opzionale:** Se vuoi analizzare video di un modello storicizzato col vecchio prefisso, puoi forzare il nome base usando `--model-name`:
+> `.venv/bin/python main.py --test-multi --model-name sailing_ppo_improved`
 
 ### Visualizzare le curve di training con TensorBoard
+Monitora in tempo reale l'addestramento.
 ```bash
 .venv/bin/python -m tensorboard.main --logdir ./sailing_tensorboard/
 ```

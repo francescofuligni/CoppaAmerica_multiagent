@@ -1,12 +1,13 @@
 import os
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import VecMonitor
-from stable_baselines3.common.callbacks import CheckpointCallback, CallbackList
+from stable_baselines3.common.callbacks import CallbackList
 import supersuit as ss
+import yaml
 
 # Importazioni Locali
 from env_sailing_env import ImprovedSailingEnv
-from callbacks import SuccessTrackingCallback
+from callbacks import SuccessTrackingCallback, CleanCheckpointCallback
 
 
 def train_model(
@@ -20,6 +21,14 @@ def train_model(
     Funzione principale di training con supporto PARALLELISMO per PettingZoo tramite SuperSuit.
     n_envs: Numero di ambienti da eseguire in parallelo.
     """
+
+    # Caricamento Configurazione YAML
+    try:
+        with open("config.yaml", "r") as f:
+            config = yaml.safe_load(f)
+    except Exception:
+        config = {}
+    train_cfg = config.get("training", {})
 
     os.makedirs("./sailing_tensorboard", exist_ok=True)
     os.makedirs(os.path.dirname(model_path), exist_ok=True)
@@ -49,7 +58,7 @@ def train_model(
     train_env = VecMonitor(env)
 
     # 2. Creazione/Caricamento del Modello PPO
-    rollout_steps_per_env = 256
+    rollout_steps_per_env = train_cfg.get("n_steps", 256)
 
     if os.path.exists(model_path + ".zip"):
         print(
@@ -60,27 +69,36 @@ def train_model(
             env=train_env,
             device="cpu",
             custom_objects={
-                "learning_rate": 2e-4,
+                "learning_rate": train_cfg.get("learning_rate", 2e-4),
                 "n_steps": rollout_steps_per_env,
-                "batch_size": 256,
-                "n_epochs": 10,
+                "batch_size": train_cfg.get("batch_size", 256),
+                "n_epochs": train_cfg.get("n_epochs", 10),
                 "tensorboard_log": "./sailing_tensorboard/",
             },
         )
     else:
         print("\n2. Creating NEW PPO model...")
+        import glob
+        checkpoint_dir = "./models/checkpoints/"
+        if os.path.exists(checkpoint_dir):
+            for file_path in glob.glob(os.path.join(checkpoint_dir, "*_steps.zip")):
+                try:
+                    os.remove(file_path)
+                except OSError:
+                    pass
+        print("   -> Piazza pulita dei vecchi checkpoint completata.")
         model = PPO(
             "MlpPolicy",
             train_env,
             device="cpu",
-            learning_rate=2e-4,
+            learning_rate=train_cfg.get("learning_rate", 2e-4),
             n_steps=rollout_steps_per_env,
-            batch_size=256,
-            n_epochs=10,
-            gamma=0.99,
-            gae_lambda=0.95,
-            clip_range=0.2,
-            ent_coef=0.01,
+            batch_size=train_cfg.get("batch_size", 256),
+            n_epochs=train_cfg.get("n_epochs", 10),
+            gamma=train_cfg.get("gamma", 0.99),
+            gae_lambda=train_cfg.get("gae_lambda", 0.95),
+            clip_range=train_cfg.get("clip_range", 0.2),
+            ent_coef=train_cfg.get("ent_coef", 0.01),
             verbose=0,
             tensorboard_log="./sailing_tensorboard/",
         )
@@ -91,15 +109,18 @@ def train_model(
         verbose=1,
         check_freq=callback_check_freq,
         window_size=200,
-        success_window=100,
+        success_window=train_cfg.get("success_window_size", 100),
+        success_threshold_pct=train_cfg.get("success_threshold_pct", 1.0),
         expected_agents=["red_boat", "blue_boat"],
         stop_on_perfect_window=True,
     )
 
-    checkpoint_callback = CheckpointCallback(
-        save_freq=50000 // n_envs,
+    checkpoint_callback = CleanCheckpointCallback(
+        save_freq=500000 // n_envs,
         save_path="./models/checkpoints/",
         name_prefix="sailing_model_ckpt",
+        keep_last=3,  # Mantiene solo gli ultimi 3 salvataggi
+        verbose=1,
     )
 
     callback = CallbackList([success_callback, checkpoint_callback])

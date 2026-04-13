@@ -12,6 +12,39 @@ from stable_baselines3 import PPO
 from train_ppo import train_model
 from evaluate_ppo import create_video, create_multi_video
 from env_sailing_env import ImprovedSailingEnv
+import glob
+import re
+import yaml
+
+
+def resolve_model_path(base_name: str, create_new: bool) -> str:
+    """Risolve il path corretto per supportare il versionamento automatico."""
+    os.makedirs("models", exist_ok=True)
+    pattern = os.path.join("models", f"{base_name}*.zip")
+    files = glob.glob(pattern)
+    
+    max_version = 0
+    regex = re.compile(rf"^{re.escape(base_name)}(?:_(\d+))?\.zip$")
+    
+    for f in files:
+        basename = os.path.basename(f)
+        match = regex.match(basename)
+        if match:
+            ver_str = match.group(1)
+            ver = int(ver_str) if ver_str else 1
+            if ver > max_version:
+                max_version = ver
+                
+    if create_new:
+        next_ver = max_version + 1
+        suffix = f"_{next_ver}" if next_ver > 1 else ""
+        return os.path.join("models", f"{base_name}{suffix}")
+    else:
+        # Se non esiste neanche l'1, usiamo la stringa base
+        if max_version == 0:
+            return os.path.join("models", base_name)
+        suffix = f"_{max_version}" if max_version > 1 else ""
+        return os.path.join("models", f"{base_name}{suffix}")
 
 
 def is_model_compatible(model_path: str) -> bool:
@@ -44,11 +77,18 @@ def is_model_compatible(model_path: str) -> bool:
 
 
 if __name__ == "__main__":
+    with open("config.yaml", "r") as f:
+        config = yaml.safe_load(f)
+    run_cfg = config.get("run", {})
+
     parser = argparse.ArgumentParser(
         description="Gestore Addestramento Barca a Vela Multi-Agent"
     )
     parser.add_argument(
-        "--train", action="store_true", help="Forza l'avvio del training"
+        "--train-new", action="store_true", help="Crea un NUOVO modello azzerando i vecchi checkpoint"
+    )
+    parser.add_argument(
+        "--train-resume", action="store_true", help="Riprende l'addestramento dall'ULTIMO modello esistente"
     )
     parser.add_argument(
         "--test-multi",
@@ -56,45 +96,52 @@ if __name__ == "__main__":
         help="Genera 4 video con direzioni di vento differenti",
     )
     parser.add_argument(
-        "--steps", type=int, default=1000000, help="Passi di training totali"
+        "--steps", type=int, default=run_cfg.get("steps", 1000000), help="Passi di training totali"
     )
     parser.add_argument(
         "--n-envs",
         type=int,
-        default=14,
+        default=run_cfg.get("n_envs", 14),
         help="Numero di ambienti/processi paralleli per training",
     )
     parser.add_argument(
-        "--model-path",
+        "--model-name",
         type=str,
-        default="models/sailing_ppo_improved",
-        help="Nome file del modello",
+        default=run_cfg.get("model_name", "sailing_model"),
+        help="Nome BASE del modello",
     )
     parser.add_argument(
         "--video-file",
         type=str,
-        default="videos/sailing_demo.mp4",
-        help="Nome file video in output",
+        default=run_cfg.get("video_file", "videos/sailing_demo.mp4"),
+        help="Nome file video in output per il test singolo",
     )
 
     args = parser.parse_args()
 
-    # 1 Training del modello se richiesto, mancante, o non compatibile con env
-    # corrente
-    model_ready = is_model_compatible(args.model_path)
-    if args.train or not model_ready:
-        print(f"Starting parallel training with {
-                args.n_envs} environments for {
-                args.steps} steps...")
+    if args.train_new or args.train_resume:
+        # In fase di training decidiamo il path dinamico
+        model_path = resolve_model_path(args.model_name, create_new=args.train_new)
+        print(f"\n[Sistema] Target Modello Risolto: {model_path}.zip")
+        
+        # Gestione compatibilità
+        if not args.train_new:
+            model_ready = is_model_compatible(model_path)
+            if not model_ready:
+                print("ERRORE: Impossibile riprendere. Modello incompatibile o non trovato.")
+                exit(1)
+        
+        print(f"Avvio addestramento parallelo ({args.n_envs} envs) per {args.steps} steps...")
         train_model(
-            total_timesteps=args.steps, n_envs=args.n_envs, model_path=args.model_path
+            total_timesteps=args.steps, n_envs=args.n_envs, model_path=model_path
         )
     else:
-        print(f"Model '{args.model_path}.zip' found. Skipping training.")
-    # 2 Generazione video (multi-agent)
-    if args.test_multi:
-        print("\nGenerating multi-agent regatta videos...")
-        create_multi_video(model_path=args.model_path)
-    else:
-        print(f"\nGenerating single multi-agent video: {args.video_file}")
-        create_video(model_path=args.model_path, filename=args.video_file)
+        # Modalità Test (nessun flag di training)
+        model_path = resolve_model_path(args.model_name, create_new=False)
+        print(f"\n[Sistema] Target Modello Risolto per Test: {model_path}.zip")
+        if args.test_multi:
+            print("\nGenerating multi-agent regatta videos...")
+            create_multi_video(model_path=model_path)
+        else:
+            print(f"\nGenerating single multi-agent video: {args.video_file}...")
+            create_video(model_path=model_path, filename=args.video_file)

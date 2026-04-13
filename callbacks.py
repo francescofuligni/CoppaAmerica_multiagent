@@ -1,5 +1,35 @@
+import os
+import glob
 import numpy as np
-from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
+
+
+class CleanCheckpointCallback(CheckpointCallback):
+    """
+    Estensione di CheckpointCallback che mantiene solo gli ultimi N checkpoint,
+    eliminando automaticamente quelli più vecchi per risparmiare spazio su disco.
+    """
+    def __init__(self, save_freq: int, save_path: str, name_prefix: str = "rl_model", keep_last: int = 3, verbose: int = 0):
+        super().__init__(save_freq, save_path, name_prefix, verbose=verbose)
+        self.keep_last = keep_last
+
+    def _on_step(self) -> bool:
+        result = super()._on_step()
+        if self.n_calls % self.save_freq == 0:
+            search_pattern = os.path.join(self.save_path, f"{self.name_prefix}_*steps.zip")
+            list_of_files = glob.glob(search_pattern)
+            list_of_files.sort(key=os.path.getmtime)
+            
+            if len(list_of_files) > self.keep_last:
+                for file_path in list_of_files[:-self.keep_last]:
+                    try:
+                        os.remove(file_path)
+                        if self.verbose > 0:
+                            print(f"[Cleanup] Rimosso vecchio checkpoint: {file_path}")
+                    except OSError:
+                        pass
+        return result
+
 
 
 class SuccessTrackingCallback(BaseCallback):
@@ -15,6 +45,7 @@ class SuccessTrackingCallback(BaseCallback):
         target_radius=50.0,
         window_size=200,
         success_window=100,
+        success_threshold_pct=1.0,
         expected_agents=None,
         stop_on_perfect_window=True,
     ):
@@ -23,6 +54,7 @@ class SuccessTrackingCallback(BaseCallback):
         self.target_radius = target_radius
         self.window_size = window_size
         self.success_window = success_window
+        self.success_threshold_pct = success_threshold_pct
         self.expected_agents = (
             list(expected_agents) if expected_agents is not None else None
         )
@@ -111,7 +143,8 @@ class SuccessTrackingCallback(BaseCallback):
             if len(successes) < self.success_window:
                 return False
             recent = successes[-self.success_window :]
-            if sum(recent) != self.success_window:
+            required_successes = int(self.success_window * self.success_threshold_pct)
+            if sum(recent) < required_successes:
                 return False
 
         return True
@@ -150,7 +183,7 @@ class SuccessTrackingCallback(BaseCallback):
                 )
                 print("\n" + "=" * 70)
                 print(
-                    f"TARGET REACHED: ultimi {self.success_window} episodi = 100% success "
+                    f"TARGET REACHED: ultimi {self.success_window} episodi >= {self.success_threshold_pct*100}% success "
                     f"per agenti {agents}. Training interrotto."
                 )
                 print("=" * 70 + "\n")

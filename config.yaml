@@ -1,0 +1,27 @@
+# Parametri globali base del progetto (CLI e gestione risorse)
+run:
+  steps: 1000000
+  n_envs: 14            # Quanti ambienti in parallelo
+  model_name: "sailing_model"
+  video_file: "videos/sailing_demo.mp4"
+
+# Iperparametri dell'agente (Reinforcement Learning)
+training:
+  learning_rate: 0.0002
+  n_steps: 256
+  batch_size: 256
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.01
+
+  # Condizioni per fermare prematuramente il training
+  success_window_size: 100        # Quanti episodi recenti analizzare
+  success_threshold_pct: 0.90      # Esempio: 1.0 significa 100%, 0.85 = 85%
+
+# Costanti del simulatore navale
+physics:
+  max_rudder_delta_per_step: 0.25 # Gradi idraulici massimi per singolo input
+  foiling_inertia: 0.98           # Momentum mantenuto in area (volando)
+  displacement_inertia: 0.85      # Momentum mantenuto nell'acqua (spanciando)

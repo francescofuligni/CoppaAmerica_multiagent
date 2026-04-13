@@ -34,6 +34,7 @@ from core_sail_trim import (
 )
 from core_boat_physics import compute_polar_speed, compute_vmg_to_target
 from env_rendering import SailingRenderer
+import yaml
 
 
 class ImprovedSailingEnv(ParallelEnv):
@@ -45,6 +46,13 @@ class ImprovedSailingEnv(ParallelEnv):
 
     def __init__(self, render_mode: Optional[str] = None):
         super().__init__()
+
+        try:
+            with open("config.yaml", "r") as f:
+                config = yaml.safe_load(f)
+        except Exception:
+            config = {}
+        phys_cfg = config.get("physics", {})
 
         # Geometria e Fisica Base
         self.field_length = 4075.0
@@ -63,6 +71,7 @@ class ImprovedSailingEnv(ParallelEnv):
         # Timone ed Effetti Continuistici
         self.max_turn_per_step = np.radians(25)
         self.min_turn_factor = 0.12
+        self.max_rudder_delta_per_step = phys_cfg.get("max_rudder_delta_per_step", 0.25)  # Max variazione timone per step
         self.mark_round_margin = 25.0
         self.post_round_offset_x = 90.0
         self.post_round_offset_y = 120.0
@@ -74,8 +83,8 @@ class ImprovedSailingEnv(ParallelEnv):
         # Inerzia velocità (Momentum)
         # Altissima sui foil (scivola nell'aria limitando l'attrito), bassa in
         # acqua piena.
-        self.displacement_inertia = 0.85
-        self.foiling_inertia = 0.98
+        self.displacement_inertia = phys_cfg.get("displacement_inertia", 0.85)
+        self.foiling_inertia = phys_cfg.get("foiling_inertia", 0.98)
 
         # Foiling characteristics (soglie di decollo e ammaraggio con isteresi)
         self.foiling_takeoff_speed = 18.0
@@ -292,7 +301,14 @@ class ImprovedSailingEnv(ParallelEnv):
                 action[1] if (hasattr(action, "__len__") and len(action) > 1) else None
             )
 
-            rudder_input = float(np.clip(rudder_raw, -1.0, 1.0))
+            rudder_target = float(np.clip(rudder_raw, -1.0, 1.0))
+            # Limita la velocità di virata (Timone idraulico graduale)
+            rudder_delta = np.clip(
+                rudder_target - prev_rudder,
+                -self.max_rudder_delta_per_step,
+                self.max_rudder_delta_per_step
+            )
+            rudder_input = float(np.clip(prev_rudder + rudder_delta, -1.0, 1.0))
             self.state[agent]["rudder_angle"] = rudder_input
 
             # -----------------------------------------------------------------
@@ -428,7 +444,7 @@ class ImprovedSailingEnv(ParallelEnv):
 
                     if 1e-6 < dist < collision_radius:
                         # Constraint rigido per collisione
-                        reward -= 10000.0
+                        reward -= 250000.0
                         terminated = True
                         self.state[agent]["termination_reason"] = "collision"
 
@@ -482,7 +498,7 @@ class ImprovedSailingEnv(ParallelEnv):
 
             # Dropped Foil Penalty Dinamica
             if dropped_foil:
-                reward -= 40.0
+                reward -= 5000.0  # Penalità fortissima per ammaraggio
             if self.state[agent]["is_foiling"]:
                 reward += (self.state[agent]["speed"] - self.foiling_drop_speed) * 0.8
             else:
@@ -509,7 +525,7 @@ class ImprovedSailingEnv(ParallelEnv):
                 or by < 0
                 or by > self.field_length
             ):
-                reward -= 10000.0
+                reward -= 250000.0
                 terminated = True
                 self.state[agent]["termination_reason"] = "out_of_bounds"
 
@@ -520,7 +536,7 @@ class ImprovedSailingEnv(ParallelEnv):
             if self.state[agent]["current_leg"] == 1:
                 if by >= self.top_gate_y and gate_left <= bx <= gate_right:
                     self.state[agent]["current_leg"] = 2
-                    reward += 500.0  # Boa Superata
+                    reward += 1500.0  # Boa Superata (Aumentato)
                     self.state[agent]["post_round_pending"] = True
 
                     ext_offset = 60.0
@@ -558,7 +574,7 @@ class ImprovedSailingEnv(ParallelEnv):
                     efficiency = (
                         max(0, self.max_steps - self.step_count) / self.max_steps
                     )
-                    reward += 2000.0 + efficiency * 1000.0
+                    reward += 5000.0 + efficiency * 2000.0
                     terminated = True
                     self.state[agent]["steps_to_target"] = self.step_count
                     self.state[agent]["termination_reason"] = "finished_race"
