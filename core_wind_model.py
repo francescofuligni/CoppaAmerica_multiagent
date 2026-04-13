@@ -5,7 +5,7 @@ Gestisce un campo di vento 2D con random walk spaziale e temporale.
 
 Architettura:
 - Vento base globale che compie un random walk temporale lento.
-- Griglia (N x N) di perturbazioni spaziali interpolata per ogni posizione, 
+- Griglia (N x N) di perturbazioni spaziali interpolata per ogni posizione,
   che evolve con approccio mean-reverting (ritorna fisiologicamente verso 0).
 - Permette perturbazioni localizzate (salti di direzione o "raffiche" d'intensità).
 
@@ -72,7 +72,7 @@ class WindField:
         Rigenera il layer di vento globale all'inizio di un nuovo episodio (regata).
 
         Parameters:
-            np_random (Generator): Passa l'rng interno di Gymnasium per garantire 
+            np_random (Generator): Passa l'rng interno di Gymnasium per garantire
                 la riproducibilità tra episodi.
             base_direction (float|None): Se fornito, stabilizza la direzione media.
         """
@@ -84,7 +84,8 @@ class WindField:
         else:
             self.base_direction = float(np_random.uniform(0, 2 * np.pi))
 
-        # Perturbazioni di rumore bianco alla griglia di sfondo (distribuzione normale)
+        # Perturbazioni di rumore bianco alla griglia di sfondo (distribuzione
+        # normale)
         self._delta_dir = np_random.normal(
             0.0, self.spatial_std_dir, (self.grid_n, self.grid_n)
         ).astype(np.float32)
@@ -95,38 +96,54 @@ class WindField:
     def step(self) -> None:
         """
         Avanza la simulazione del vento di uno step computazionale, aggiornando
-        la base globale (random walk) e ricalcolando la degradazione delle perturbazioni 
+        la base globale (random walk) e ricalcolando la degradazione delle perturbazioni
         spaziali (mean-reverting a zero usando spatial_corr).
         """
         rng = self._rng
 
         # Deriva temporale del vento base
-        self.base_direction += float(rng.uniform(-self.temporal_drift_dir, self.temporal_drift_dir))
+        self.base_direction += float(
+            rng.uniform(-self.temporal_drift_dir, self.temporal_drift_dir)
+        )
         self.base_direction = self.base_direction % (2 * np.pi)
 
-        self.base_speed += float(rng.uniform(-self.temporal_drift_speed, self.temporal_drift_speed))
+        self.base_speed += float(
+            rng.uniform(-self.temporal_drift_speed, self.temporal_drift_speed)
+        )
         # Hard limits
-        self.base_speed = float(np.clip(self.base_speed, 15.0, self.base_speed_range[1]))
+        self.base_speed = float(
+            np.clip(self.base_speed, 15.0, self.base_speed_range[1])
+        )
 
         # Noise incrementale per griglia perturbazioni
-        noise_dir = rng.normal(0, self.spatial_std_dir * 0.1, (self.grid_n, self.grid_n))
-        noise_speed = rng.normal(0, self.spatial_std_speed * 0.1, (self.grid_n, self.grid_n))
+        noise_dir = rng.normal(
+            0, self.spatial_std_dir * 0.1, (self.grid_n, self.grid_n)
+        )
+        noise_speed = rng.normal(
+            0, self.spatial_std_speed * 0.1, (self.grid_n, self.grid_n)
+        )
 
         # Modello stocastico mean-reverting (AR1 process)
-        self._delta_dir = (self.spatial_corr * self._delta_dir + noise_dir).astype(np.float32)
-        self._delta_speed = (self.spatial_corr * self._delta_speed + noise_speed).astype(np.float32)
+        self._delta_dir = (self.spatial_corr * self._delta_dir + noise_dir).astype(
+            np.float32
+        )
+        self._delta_speed = (
+            self.spatial_corr * self._delta_speed + noise_speed
+        ).astype(np.float32)
 
         # Clamping strutturale per non stravolgere la fisica della barca
         self._delta_dir = np.clip(
             self._delta_dir, -self.spatial_std_dir * 2.5, self.spatial_std_dir * 2.5
         )
         self._delta_speed = np.clip(
-            self._delta_speed, -self.spatial_std_speed * 2.5, self.spatial_std_speed * 2.5
+            self._delta_speed,
+            -self.spatial_std_speed * 2.5,
+            self.spatial_std_speed * 2.5,
         )
 
     def get_local_wind(self, x: float, y: float) -> tuple[float, float]:
         """
-        Estrapola i parametri del vento locali data una posizione XY usando 
+        Estrapola i parametri del vento locali data una posizione XY usando
         interpolazione bilineare tra i punti più vicini nella griglia di noise.
 
         Parameters:
@@ -147,18 +164,18 @@ class WindField:
 
         # Interpolazione bilineare offset direzione
         local_delta_dir = (
-            self._delta_dir[ix, iy]           * (1 - fx) * (1 - fy)
-            + self._delta_dir[ix + 1, iy]     * fx       * (1 - fy)
-            + self._delta_dir[ix, iy + 1]     * (1 - fx) * fy
-            + self._delta_dir[ix + 1, iy + 1] * fx       * fy
+            self._delta_dir[ix, iy] * (1 - fx) * (1 - fy)
+            + self._delta_dir[ix + 1, iy] * fx * (1 - fy)
+            + self._delta_dir[ix, iy + 1] * (1 - fx) * fy
+            + self._delta_dir[ix + 1, iy + 1] * fx * fy
         )
 
         # Interpolazione bilineare offset velocità
         local_delta_speed = (
-            self._delta_speed[ix, iy]           * (1 - fx) * (1 - fy)
-            + self._delta_speed[ix + 1, iy]     * fx       * (1 - fy)
-            + self._delta_speed[ix, iy + 1]     * (1 - fx) * fy
-            + self._delta_speed[ix + 1, iy + 1] * fx       * fy
+            self._delta_speed[ix, iy] * (1 - fx) * (1 - fy)
+            + self._delta_speed[ix + 1, iy] * fx * (1 - fy)
+            + self._delta_speed[ix, iy + 1] * (1 - fx) * fy
+            + self._delta_speed[ix + 1, iy + 1] * fx * fy
         )
 
         direction = (self.base_direction + local_delta_dir) % (2 * np.pi)
@@ -166,9 +183,11 @@ class WindField:
 
         return float(direction), speed
 
-    def get_grid_arrows(self, n_arrows: int = 8) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    def get_grid_arrows(
+        self, n_arrows: int = 8
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
-        Utility per il rendering grafico di Matplotlib. 
+        Utility per il rendering grafico di Matplotlib.
         Calcola i vettori su griglia uniforme da rappresentare graficamente.
 
         Parameters:

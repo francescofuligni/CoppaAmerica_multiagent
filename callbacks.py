@@ -1,11 +1,13 @@
 import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 
+
 class SuccessTrackingCallback(BaseCallback):
     """
     Callback robusta per ambienti multi-agente e vettoriali (parallelizzati con VecEnv).
     Tiene traccia di successi e distanze finali di ciascun agente.
     """
+
     def __init__(
         self,
         verbose=1,
@@ -21,14 +23,16 @@ class SuccessTrackingCallback(BaseCallback):
         self.target_radius = target_radius
         self.window_size = window_size
         self.success_window = success_window
-        self.expected_agents = list(expected_agents) if expected_agents is not None else None
+        self.expected_agents = (
+            list(expected_agents) if expected_agents is not None else None
+        )
         self.stop_on_perfect_window = stop_on_perfect_window
         self.goal_reached = False
 
         # Dati: agent -> lista successi e distanze
         self.episode_successes = {}  # dict[agent] = lista successi
         self.episode_distances = {}  # dict[agent] = lista distanze
-        self.n_episodes = {}         # dict[agent] = totale episodi
+        self.n_episodes = {}  # dict[agent] = totale episodi
 
         # Metriche continue (rolling window)
         self.trim_eff_window = {}
@@ -56,23 +60,29 @@ class SuccessTrackingCallback(BaseCallback):
         """Consume metrics for one agent sample (supports both step and terminal records)."""
         self._ensure_agent_buffers(agent)
 
-        if 'trim_efficiency' in agent_info:
-            self._append_rolling(self.trim_eff_window[agent], float(agent_info['trim_efficiency']))
-        if 'trim_error' in agent_info:
-            self._append_rolling(self.trim_error_window[agent], float(agent_info['trim_error']))
-        if 'vmg' in agent_info:
-            self._append_rolling(self.vmg_window[agent], float(agent_info['vmg']))
-        if 'speed' in agent_info:
-            self._append_rolling(self.speed_window[agent], float(agent_info['speed']))
+        if "trim_efficiency" in agent_info:
+            self._append_rolling(
+                self.trim_eff_window[agent], float(agent_info["trim_efficiency"])
+            )
+        if "trim_error" in agent_info:
+            self._append_rolling(
+                self.trim_error_window[agent], float(agent_info["trim_error"])
+            )
+        if "vmg" in agent_info:
+            self._append_rolling(self.vmg_window[agent], float(agent_info["vmg"]))
+        if "speed" in agent_info:
+            self._append_rolling(self.speed_window[agent], float(agent_info["speed"]))
 
         # Conta episodio solo in evento finale.
-        is_terminal = bool(agent_info.get('terminated', False) or agent_info.get('truncated', False))
+        is_terminal = bool(
+            agent_info.get("terminated", False) or agent_info.get("truncated", False)
+        )
         if not is_terminal:
             return
 
-        final_dist = float(agent_info['distance_to_target'])
-        if 'finished_race' in agent_info:
-            success = bool(agent_info['finished_race'])
+        final_dist = float(agent_info["distance_to_target"])
+        if "finished_race" in agent_info:
+            success = bool(agent_info["finished_race"])
         else:
             success = final_dist < self.target_radius
 
@@ -80,7 +90,8 @@ class SuccessTrackingCallback(BaseCallback):
         self.episode_distances[agent].append(final_dist)
         self.n_episodes[agent] += 1
 
-        # Mantieni solo ultime N ep (N = max finestra metriche e finestra obiettivo)
+        # Mantieni solo ultime N ep (N = max finestra metriche e finestra
+        # obiettivo)
         keep_n = max(100, self.success_window)
         if len(self.episode_successes[agent]) > keep_n:
             self.episode_successes[agent].pop(0)
@@ -99,23 +110,25 @@ class SuccessTrackingCallback(BaseCallback):
             successes = self.episode_successes.get(agent, [])
             if len(successes) < self.success_window:
                 return False
-            recent = successes[-self.success_window:]
+            recent = successes[-self.success_window :]
             if sum(recent) != self.success_window:
                 return False
 
         return True
 
     def _on_step(self) -> bool:
-        # In vectorized envs, self.locals['infos'] è una lista con un dict per ambiente
+        # In vectorized envs, self.locals['infos'] è una lista con un dict per
+        # ambiente
         infos = self.locals.get("infos", [])
 
         for env_info in infos:
             if not isinstance(env_info, dict):
                 continue
 
-            # Formato appiattito (VecEnv after PettingZoo conversion): singolo agent_info.
-            if 'distance_to_target' in env_info:
-                agent = str(env_info.get('agent', 'agent_0'))
+            # Formato appiattito (VecEnv after PettingZoo conversion): singolo
+            # agent_info.
+            if "distance_to_target" in env_info:
+                agent = str(env_info.get("agent", "agent_0"))
                 self._consume_agent_info(agent, env_info)
                 continue
 
@@ -123,14 +136,18 @@ class SuccessTrackingCallback(BaseCallback):
             for agent, agent_info in env_info.items():
                 if not isinstance(agent_info, dict):
                     continue
-                if 'distance_to_target' not in agent_info:
+                if "distance_to_target" not in agent_info:
                     continue
                 self._consume_agent_info(str(agent), agent_info)
 
         if self.stop_on_perfect_window and self._has_perfect_recent_window():
             self.goal_reached = True
             if self.verbose:
-                agents = self.expected_agents if self.expected_agents is not None else sorted(self.episode_successes.keys())
+                agents = (
+                    self.expected_agents
+                    if self.expected_agents is not None
+                    else sorted(self.episode_successes.keys())
+                )
                 print("\n" + "=" * 70)
                 print(
                     f"TARGET REACHED: ultimi {self.success_window} episodi = 100% success "
@@ -141,9 +158,9 @@ class SuccessTrackingCallback(BaseCallback):
 
         # Stampa periodica
         if self.n_calls > 0 and self.n_calls % self.check_freq == 0:
-            print(f"\n{'='*70}")
+            print(f"\n{'=' * 70}")
             print(f"📊 Progress at {self.n_calls:,} steps")
-            print(f"{'='*70}")
+            print(f"{'=' * 70}")
 
             global_trim_eff = []
             global_trim_error = []
@@ -158,7 +175,9 @@ class SuccessTrackingCallback(BaseCallback):
                     success_rate = (n_successes / n_recent) * 100
                     avg_dist = np.mean(self.episode_distances[agent])
                     print(f"{agent} - Last {n_recent} episodes:")
-                    print(f"   ✓ Successes: {n_successes}/{n_recent} ({success_rate:.1f}%)")
+                    print(
+                        f"   ✓ Successes: {n_successes}/{n_recent} ({success_rate:.1f}%)"
+                    )
                     print(f"   Avg final distance: {avg_dist:.1f} m")
                     global_success_rates.append(success_rate)
 
@@ -185,16 +204,24 @@ class SuccessTrackingCallback(BaseCallback):
                     self.logger.record(f"speed/{agent}_mean_kts", speed_mean)
 
             if global_trim_eff:
-                self.logger.record("trim/global_efficiency_mean", float(np.mean(global_trim_eff)))
+                self.logger.record(
+                    "trim/global_efficiency_mean", float(np.mean(global_trim_eff))
+                )
             if global_trim_error:
-                self.logger.record("trim/global_error_mean", float(np.mean(global_trim_error)))
+                self.logger.record(
+                    "trim/global_error_mean", float(np.mean(global_trim_error))
+                )
             if global_vmg:
                 self.logger.record("vmg/global_mean_kts", float(np.mean(global_vmg)))
             if global_speed:
-                self.logger.record("speed/global_mean_kts", float(np.mean(global_speed)))
+                self.logger.record(
+                    "speed/global_mean_kts", float(np.mean(global_speed))
+                )
             if global_success_rates:
-                self.logger.record("success/global_rate", float(np.mean(global_success_rates)))
+                self.logger.record(
+                    "success/global_rate", float(np.mean(global_success_rates))
+                )
 
-            print(f"{'='*70}\n")
+            print(f"{'=' * 70}\n")
 
         return True

@@ -9,7 +9,7 @@ Convenzioni utilizzate:
 - L'input fornito dalla policy (azione dell'agente) in [-1, 1] viene convertito nello spazio interno [0, 1].
 
 Note Tecniche:
-- In foiling, la sensibilità del trim è maggiore. Un errore di trim porta a una 
+- In foiling, la sensibilità del trim è maggiore. Un errore di trim porta a una
   maggiore penalità in termini di efficienza, causando un decremento netto della velocità.
 - In andatura "displacement" (non-foiling), l'effetto del trim è meno estremo.
 """
@@ -51,9 +51,23 @@ def optimal_trim_for_twa(twa_deg: float, is_foiling: bool) -> float:
     """
     points = (
         # (TWA deg, trim)
-        [(45.0, 0.98), (65.0, 0.85), (90.0, 0.68), (130.0, 0.45), (160.0, 0.30), (180.0, 0.22)]
+        [
+            (45.0, 0.98),
+            (65.0, 0.85),
+            (90.0, 0.68),
+            (130.0, 0.45),
+            (160.0, 0.30),
+            (180.0, 0.22),
+        ]
         if is_foiling
-        else [(35.0, 0.94), (60.0, 0.82), (90.0, 0.65), (130.0, 0.42), (160.0, 0.28), (180.0, 0.20)]
+        else [
+            (35.0, 0.94),
+            (60.0, 0.82),
+            (90.0, 0.65),
+            (130.0, 0.42),
+            (160.0, 0.28),
+            (180.0, 0.20),
+        ]
     )
 
     angles = np.array([p[0] for p in points], dtype=np.float32)
@@ -96,10 +110,10 @@ def trim_speed_multiplier(efficiency: float, is_foiling: bool) -> float:
         float: Moltiplicatore di velocità da applicare alla velocità teorica massima.
     """
     if is_foiling:
-        # Ponderazione estrema: senza un buon trim in foiling (0.60 base), 
+        # Ponderazione estrema: senza un buon trim in foiling (0.60 base),
         # la barca poggia pesantemente o stalla.
         return float(0.60 + 0.65 * efficiency)
-    
+
     # In displacement c'è maggiore resistenza fissa: l'effetto della vela imperfetta
     # influenza meno la dinamica lineare diretta (0.72 base).
     return float(0.72 + 0.42 * efficiency)
