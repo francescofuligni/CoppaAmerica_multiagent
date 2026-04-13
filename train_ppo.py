@@ -1,6 +1,6 @@
 import os
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import VecMonitor
+from stable_baselines3.common.vec_env import VecMonitor, VecFrameStack
 from stable_baselines3.common.callbacks import CallbackList
 import supersuit as ss
 import yaml
@@ -56,6 +56,9 @@ def train_model(
     )
 
     train_env = VecMonitor(env)
+    
+    n_stack = train_cfg.get("frame_stack", 4)
+    train_env = VecFrameStack(train_env, n_stack=n_stack)
 
     # 2. Creazione/Caricamento del Modello PPO
     rollout_steps_per_env = train_cfg.get("n_steps", 256)
@@ -99,6 +102,7 @@ def train_model(
             gae_lambda=train_cfg.get("gae_lambda", 0.95),
             clip_range=train_cfg.get("clip_range", 0.2),
             ent_coef=train_cfg.get("ent_coef", 0.01),
+            policy_kwargs=dict(net_arch=dict(pi=train_cfg.get("net_arch", [256, 256]), vf=train_cfg.get("net_arch", [256, 256]))),
             verbose=0,
             tensorboard_log="./sailing_tensorboard/",
         )

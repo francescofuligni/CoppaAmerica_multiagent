@@ -132,9 +132,19 @@ if __name__ == "__main__":
                 exit(1)
         
         print(f"Avvio addestramento parallelo ({args.n_envs} envs) per {args.steps} steps...")
-        train_model(
-            total_timesteps=args.steps, n_envs=args.n_envs, model_path=model_path
-        )
+        
+        try:
+            train_model(
+                total_timesteps=args.steps, n_envs=args.n_envs, model_path=model_path
+            )
+        except KeyboardInterrupt:
+            print("\n[!] Addestramento interrotto manualmente (CTRL+C). Avvio test visivo del modello salvato...")
+        finally:
+            print(f"\n[Sistema] Generazione automatica video post-addestramento usando {model_path}.zip...")
+            if args.test_multi:
+                create_multi_video(model_path=model_path)
+            else:
+                create_video(model_path=model_path, filename=args.video_file)
     else:
         # Modalità Test (nessun flag di training)
         model_path = resolve_model_path(args.model_name, create_new=False)

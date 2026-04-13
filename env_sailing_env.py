@@ -444,7 +444,7 @@ class ImprovedSailingEnv(ParallelEnv):
 
                     if 1e-6 < dist < collision_radius:
                         # Constraint rigido per collisione
-                        reward -= 250000.0
+                        reward -= 1000.0
                         terminated = True
                         self.state[agent]["termination_reason"] = "collision"
 
@@ -498,7 +498,7 @@ class ImprovedSailingEnv(ParallelEnv):
 
             # Dropped Foil Penalty Dinamica
             if dropped_foil:
-                reward -= 5000.0  # Penalità fortissima per ammaraggio
+                reward -= 250.0  # Penalità bilanciata per ammaraggio
             if self.state[agent]["is_foiling"]:
                 reward += (self.state[agent]["speed"] - self.foiling_drop_speed) * 0.8
             else:
@@ -525,7 +525,7 @@ class ImprovedSailingEnv(ParallelEnv):
                 or by < 0
                 or by > self.field_length
             ):
-                reward -= 250000.0
+                reward -= 1000.0
                 terminated = True
                 self.state[agent]["termination_reason"] = "out_of_bounds"
 
