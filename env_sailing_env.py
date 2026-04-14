@@ -46,6 +46,7 @@ class ImprovedSailingEnv(ParallelEnv):
 
     def __init__(self, render_mode: Optional[str] = None):
         super().__init__()
+        self.render_mode = render_mode
 
         try:
             with open("config.yaml", "r") as f:

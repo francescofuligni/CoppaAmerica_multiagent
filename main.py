@@ -6,6 +6,12 @@ Entry Point principale per gestire l'addestramento e la generazione video.
 
 import os
 import argparse
+import warnings
+
+# Silenzia falsi allarmi noti delle dipendenze vettoriali di SB3/Supersuit
+warnings.filterwarnings("ignore", category=UserWarning, module="stable_baselines3.common.vec_env.base_vec_env")
+warnings.filterwarnings("ignore", category=UserWarning, module="supersuit.vector.sb3_vector_wrapper")
+warnings.filterwarnings("ignore", category=UserWarning, module="stable_baselines3")
 from stable_baselines3 import PPO
 
 # Moduli locali
@@ -53,11 +59,18 @@ def is_model_compatible(model_path: str) -> bool:
     if not os.path.exists(model_zip):
         return False
 
+    try:
+        with open("config.yaml", "r") as f:
+            config = yaml.safe_load(f)
+    except Exception:
+        config = {}
+    frame_stack = config.get("training", {}).get("frame_stack", 1)
+
     env = ImprovedSailingEnv()
     try:
         model = PPO.load(model_path, device="cpu")
         sample_agent = env.possible_agents[0]
-        env_obs_dim = int(env.observation_space(sample_agent).shape[0])
+        env_obs_dim = int(env.observation_space(sample_agent).shape[0]) * frame_stack
         env_act_dim = int(env.action_space(sample_agent).shape[0])
         model_obs_dim = int(model.observation_space.shape[0])
         model_act_dim = int(model.action_space.shape[0])

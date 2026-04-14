@@ -49,6 +49,7 @@ def create_video(
         return orig_reset(*args, **kwargs)
     raw_env.reset = custom_reset
 
+    raw_env = ss.black_death_v3(raw_env)
     venv = ss.pettingzoo_env_to_vec_env_v1(raw_env)
     venv = ss.concat_vec_envs_v1(venv, 1, num_cpus=0, base_class="stable_baselines3")
     venv = VecMonitor(venv)
@@ -56,7 +57,10 @@ def create_video(
     venv = VecFrameStack(venv, n_stack=n_stack)
 
     obs = venv.reset()
-    frames = [raw_env.render()]
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        frames = [venv.render()]
     step = 0
 
     # Non possiamo tracciare le info individuali in un loop vettoriale compatto 
@@ -65,7 +69,9 @@ def create_video(
     while step < raw_env.max_steps:
         actions, _ = model.predict(obs, deterministic=True)
         obs, rewards, dones, infos = venv.step(actions)
-        frames.append(raw_env.render())
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            frames.append(venv.render())
         step += 1
         
         # In multi-agent sb3 con concat_vec_envs 2 agents = 2 envs array.
