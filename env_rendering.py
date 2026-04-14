@@ -91,27 +91,27 @@ class SailingRenderer:
         gate_left = self.env.course_center_x - self.env.gate_width / 2.0
         gate_right = self.env.course_center_x + self.env.gate_width / 2.0
 
-        # Top Gate (Bolina)
+        # Top Gate (Bolina) - ORA BLU
         self.ax.plot(
             [gate_left, gate_right],
             [self.env.top_gate_y, self.env.top_gate_y],
-            "g--",
+            "b--",
             alpha=0.3,
         )
         self.ax.plot(
-            gate_left, self.env.top_gate_y, "go", markersize=8, label="Gate Mark"
+            gate_left, self.env.top_gate_y, "bo", markersize=5, label="Gate Mark"
         )
-        self.ax.plot(gate_right, self.env.top_gate_y, "go", markersize=8)
+        self.ax.plot(gate_right, self.env.top_gate_y, "bo", markersize=5)
 
-        # Bottom Gate (Poppa / Arrivo)
+        # Bottom Gate (Poppa / Arrivo) - ORA VERDE
         self.ax.plot(
             [gate_left, gate_right],
             [self.env.bottom_gate_y, self.env.bottom_gate_y],
             "g--",
             alpha=0.3,
         )
-        self.ax.plot(gate_left, self.env.bottom_gate_y, "bo", markersize=8)
-        self.ax.plot(gate_right, self.env.bottom_gate_y, "bo", markersize=8)
+        self.ax.plot(gate_left, self.env.bottom_gate_y, "go", markersize=5)
+        self.ax.plot(gate_right, self.env.bottom_gate_y, "go", markersize=5)
 
         info_lines = []
 

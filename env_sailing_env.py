@@ -176,6 +176,8 @@ class ImprovedSailingEnv(ParallelEnv):
                 "dropped_foil_penalty_applied": False,
                 "current_leg": 0,  # 0: Partenza, 1: Bolina, 2: Poppa
                 "post_round_pending": False,
+                "max_y_reached": start_y,
+                "min_y_reached": start_y,
             }
 
             # Selezione tattica boa (sinistra/destra del top gate da puntare a Leg 1)
@@ -512,9 +514,31 @@ class ImprovedSailingEnv(ParallelEnv):
                 terminated = True
                 self.state[agent]["termination_reason"] = "out_of_bounds"
 
-            # Logic Gates
+            # Logic Gates e Prevenzione Loop (No-Backward-Sailing)
             gate_left = self.course_center_x - self.gate_width / 2.0
             gate_right = self.course_center_x + self.gate_width / 2.0
+
+            if self.state[agent]["current_leg"] in [0, 1]:
+                # Fasi di Bolina: la navigazione deve puntare verso l'alto (Y crescente)
+                if by > self.state[agent]["max_y_reached"]:
+                    self.state[agent]["max_y_reached"] = by
+                
+                # Se la barca perde oltre 150 metri rispetto alla massima quota Y raggiunta, 
+                # sta navigando all'indietro o compiendo un loop mortale.
+                if by < self.state[agent]["max_y_reached"] - 150.0:
+                    reward -= 500.0
+                    terminated = True
+                    self.state[agent]["termination_reason"] = "anti_loop_penalty"
+
+            elif self.state[agent]["current_leg"] == 2:
+                # Fase di Poppa: la navigazione deve puntare verso il basso (Y decrescente)
+                if by < self.state[agent]["min_y_reached"]:
+                    self.state[agent]["min_y_reached"] = by
+
+                if by > self.state[agent]["min_y_reached"] + 150.0:
+                    reward -= 500.0
+                    terminated = True
+                    self.state[agent]["termination_reason"] = "anti_loop_penalty"
 
             # Leg 0: Start Gate
             if self.state[agent]["current_leg"] == 0:
@@ -534,6 +558,7 @@ class ImprovedSailingEnv(ParallelEnv):
             elif self.state[agent]["current_leg"] == 1:
                 if by >= self.top_gate_y and gate_left <= bx <= gate_right:
                     self.state[agent]["current_leg"] = 2
+                    self.state[agent]["min_y_reached"] = by
                     reward += 1500.0  # Boa Superata (Aumentato)
                     self.state[agent]["post_round_pending"] = True
 
