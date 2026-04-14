@@ -174,19 +174,19 @@ class ImprovedSailingEnv(ParallelEnv):
                 "is_foiling": False,
                 "active_foil": 1.0,
                 "dropped_foil_penalty_applied": False,
-                "current_leg": 1,  # 1: Bolina, 2: Poppa
+                "current_leg": 0,  # 0: Partenza, 1: Bolina, 2: Poppa
                 "post_round_pending": False,
             }
 
-            # Selezione tattica boa (sinistra/destra del top gate)
+            # Selezione tattica boa (sinistra/destra del top gate da puntare a Leg 1)
             rounding_side = float(self.np_random.choice([-1, 1]))
             round_mark_x = self.course_center_x + rounding_side * (
                 self.gate_width / 2.0
             )
             self.round_marks[agent] = {"side": rounding_side, "x": round_mark_x}
 
-            # Target temporaneo: il giro fisco della boa prescelta
-            self.target[agent] = np.array([round_mark_x, self.top_gate_y])
+            # Target iniziale: attraversamento del gate di partenza (Leg 0)
+            self.target[agent] = np.array([self.course_center_x, self.bottom_gate_y])
             self.trajectory[agent] = [
                 np.array([self.state[agent]["x"], self.state[agent]["y"]])
             ]
@@ -429,25 +429,7 @@ class ImprovedSailingEnv(ParallelEnv):
             truncated = False
             self.state[agent]["termination_reason"] = None
 
-            # -----------------------------------------------------------------
-            # [4] Collisioni e Interazioni Multi-Agent
-            # -----------------------------------------------------------------
-            collision_radius = 20.0
-            for other_agent in self.agents:
-                if other_agent != agent:
-                    dist_vec = np.array(
-                        [
-                            self.state[agent]["x"] - self.state[other_agent]["x"],
-                            self.state[agent]["y"] - self.state[other_agent]["y"],
-                        ]
-                    )
-                    dist = float(np.linalg.norm(dist_vec))
-
-                    if 1e-6 < dist < collision_radius:
-                        # Constraint rigido per collisione
-                        reward -= 1000.0
-                        terminated = True
-                        self.state[agent]["termination_reason"] = "collision"
+            # Le collisioni vengono calcolate globalmente a fine step.
 
             # -----------------------------------------------------------------
             # [5] Reward Shaping (Motori di spinta per la policy)
@@ -534,7 +516,22 @@ class ImprovedSailingEnv(ParallelEnv):
             gate_left = self.course_center_x - self.gate_width / 2.0
             gate_right = self.course_center_x + self.gate_width / 2.0
 
-            if self.state[agent]["current_leg"] == 1:
+            # Leg 0: Start Gate
+            if self.state[agent]["current_leg"] == 0:
+                if by >= self.bottom_gate_y:
+                    if gate_left <= bx <= gate_right:
+                        self.state[agent]["current_leg"] = 1
+                        reward += 500.0  # Ottima partenza
+                        # Target successivo: Boa di Bolina
+                        self.target[agent] = np.array([self.round_marks[agent]["x"], self.top_gate_y])
+                        pos = np.array([self.state[agent]["x"], self.state[agent]["y"]])
+                        self.best_distance[agent] = float(np.linalg.norm(pos - self.target[agent]))
+                    else:
+                        reward -= 1000.0
+                        terminated = True
+                        self.state[agent]["termination_reason"] = "missed_start_gate"
+
+            elif self.state[agent]["current_leg"] == 1:
                 if by >= self.top_gate_y and gate_left <= bx <= gate_right:
                     self.state[agent]["current_leg"] = 2
                     reward += 1500.0  # Boa Superata (Aumentato)
@@ -616,6 +613,30 @@ class ImprovedSailingEnv(ParallelEnv):
                 "terminated": terminated,
                 "truncated": truncated,
             }
+
+        # ---------------------------------------------------------------------
+        # RISOLUZIONE GLOBALE COLLISIONI 
+        # (Post-calcolo distanze per simmetria fisica)
+        # ---------------------------------------------------------------------
+        collision_radius = 20.0
+        agents_list = list(self.agents)
+        for i in range(len(agents_list)):
+            for j in range(i + 1, len(agents_list)):
+                a1, a2 = agents_list[i], agents_list[j]
+                if not (terminations.get(a1, True)) and not (terminations.get(a2, True)):
+                    dx = self.state[a1]["x"] - self.state[a2]["x"]
+                    dy = self.state[a1]["y"] - self.state[a2]["y"]
+                    dist = float(np.linalg.norm([dx, dy]))
+                    if dist < collision_radius:
+                        terminations[a1], terminations[a2] = True, True
+                        rewards[a1] -= 1000.0
+                        rewards[a2] -= 1000.0
+                        self.state[a1]["termination_reason"] = "collision"
+                        self.state[a2]["termination_reason"] = "collision"
+                        infos[a1]["terminated"] = True
+                        infos[a2]["terminated"] = True
+                        infos[a1]["termination_reason"] = "collision"
+                        infos[a2]["termination_reason"] = "collision"
 
         self.agents = [
             a for a in self.agents if not (terminations[a] or truncations[a])
