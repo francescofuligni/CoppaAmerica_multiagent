@@ -120,7 +120,7 @@ def train_model(
     )
 
     checkpoint_callback = CleanCheckpointCallback(
-        save_freq=500000 // n_envs,
+        save_freq=250000 // n_envs,
         save_path="./models/checkpoints/",
         name_prefix="sailing_model_ckpt",
         keep_last=3,  # Mantiene solo gli ultimi 3 salvataggi

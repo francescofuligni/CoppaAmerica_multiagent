@@ -100,9 +100,9 @@ class ImprovedSailingEnv(ParallelEnv):
 
         # Spazi Osservazione / Azione
         # Obs: (x, y, speed, sin_h, cos_h, sin_aw, cos_aw, wind_speed, dist, sin_rb, cos_rb,
-        #       rudder, sail_trim, is_foiling, active_foil, is_upwind_leg)
+        #       rudder, sail_trim, is_foiling, active_foil, leg_phase, time_remaining)
         self.observation_spaces = {
-            agent: spaces.Box(low=-1.0, high=1.0, shape=(16,), dtype=np.float32)
+            agent: spaces.Box(low=-1.0, high=1.0, shape=(17,), dtype=np.float32)
             for agent in self.possible_agents
         }
 
@@ -155,14 +155,21 @@ class ImprovedSailingEnv(ParallelEnv):
             base_dir = 1.5 * np.pi
         self.wind_field.reset(self.np_random, base_direction=base_dir)
 
-        # Posizionamento scafi e target (Top Gate)
+        # Posizionamento scafi alle boe del gate di partenza
+        # Le barche partono alla stessa y delle boe ma più in basso,
+        # una alla x della boa sinistra e l'altra alla x della boa destra.
+        gate_left_x = self.course_center_x - self.gate_width / 2.0
+        gate_right_x = self.course_center_x + self.gate_width / 2.0
+        start_y = self.bottom_gate_y - 80.0  # Sotto la linea di partenza
+
+        # Assegnazione casuale: chi va a sinistra e chi a destra
+        if self.np_random.random() < 0.5:
+            side_assignment = [gate_left_x, gate_right_x]  # red sx, blue dx
+        else:
+            side_assignment = [gate_right_x, gate_left_x]  # red dx, blue sx
+
         for i, agent in enumerate(self.possible_agents):
-            # Spawn imbarcazioni all'interno dei Boundaries (x_min, x_max),
-            # distanziati verticalmente
-            start_x = self.np_random.uniform(
-                self.boundaries["x_min"] + 50, self.boundaries["x_max"] - 50
-            )
-            start_y = self.np_random.uniform(20.0, 100.0) + i * 20.0
+            start_x = side_assignment[i]
 
             self.state[agent] = {
                 "x": start_x,
@@ -257,7 +264,8 @@ class ImprovedSailingEnv(ParallelEnv):
                 trim_level_to_action(self.state[agent]["sail_trim"]),
                 1.0 if self.state[agent]["is_foiling"] else 0.0,
                 self.state[agent]["active_foil"],
-                1.0 if self.state[agent]["current_leg"] == 1 else -1.0,
+                self.state[agent]["current_leg"] / 2.0,  # Leg: 0.0=partenza, 0.5=bolina, 1.0=poppa
+                1.0 - (self.step_count / self.max_steps),  # Tempo rimanente [1→0]
             ],
             dtype=np.float32,
         )
@@ -439,60 +447,52 @@ class ImprovedSailingEnv(ParallelEnv):
             pos = np.array([self.state[agent]["x"], self.state[agent]["y"]])
             dist_to_target = float(np.linalg.norm(pos - self.target[agent]))
 
-            # Progress Reward
+            # Progress Reward (×3)
             distance_delta = prev_dist - dist_to_target
-            if self.state[agent]["is_foiling"]:
-                if distance_delta > 0:
-                    reward += distance_delta * (
-                        (self.state[agent]["speed"] / 15.0) ** 2
-                    )
-                else:
-                    reward += distance_delta * 0.1
-            else:
-                reward += distance_delta * 0.1
+            reward += distance_delta * 0.15
 
-            # VMG Shaping
+            # VMG Shaping (×3)
             leg_vmg_weight = 1.6 if self.state[agent]["current_leg"] == 1 else 1.25
             reward += max(vmg_norm, 0.0) * leg_vmg_weight * 6.0
-            reward += min(vmg_norm, 0.0) * leg_vmg_weight * 2.0
+            reward += min(vmg_norm, 0.0) * leg_vmg_weight * 3.0
 
-            # Y-Axis Leg shaping
+            # Y-Axis Leg shaping (×3)
             leg_delta_y = float(self.state[agent]["y"] - prev_y)
             if self.state[agent]["current_leg"] == 1:
-                reward += leg_delta_y * 0.12  # Su
+                reward += leg_delta_y * 0.15  # Su
             else:
-                reward -= leg_delta_y * 0.12  # Giù
+                reward -= leg_delta_y * 0.15  # Giù
 
-            # Costo Base & Penalità Dinamiche Minori
-            reward -= 0.20  # Urgency step cost
+            # Costo Base (urgency ×3)
+            reward -= 1.50
 
-            # Penalità Timone (Attrito/Nervosità)
-            reward -= (abs(rudder_input) ** 3) * 2.0
+            # Penalità Timone (×3)
+            reward -= (abs(rudder_input) ** 3) * 1.5
             rudder_delta = rudder_input - prev_rudder
-            reward -= (abs(rudder_delta) ** 2) * 5.0
+            reward -= (abs(rudder_delta) ** 2) * 3.0
 
-            # Vele: penalizza scossoni fuori assetto
-            reward += (trim_eff - 0.72) * 8.5
-            reward -= (abs(trim_delta) ** 1.5) * 5.5
+            # Vele: penalizza scossoni fuori assetto (×3)
+            reward += (trim_eff - 0.72) * 6.0
+            reward -= (abs(trim_delta) ** 1.5) * 4.5
             leg_trim_threshold = 0.18 if self.state[agent]["current_leg"] == 1 else 0.24
             if self.state[agent]["speed"] > 10.0 and trim_error > leg_trim_threshold:
-                reward -= (trim_error - leg_trim_threshold) * 18.0
+                reward -= (trim_error - leg_trim_threshold) * 15.0
 
-            # Trim vs VMG Synergy
-            reward += max(vmg_norm, 0.0) * (trim_eff - 0.50) * 5.0
+            # Trim vs VMG Synergy (×3)
+            reward += max(vmg_norm, 0.0) * (trim_eff - 0.50) * 4.5
 
-            # Dropped Foil Penalty Dinamica
+            # Dropped Foil Penalty (×3)
             if dropped_foil:
-                reward -= 250.0  # Penalità bilanciata per ammaraggio
+                reward -= 90.0
             if self.state[agent]["is_foiling"]:
-                reward += (self.state[agent]["speed"] - self.foiling_drop_speed) * 0.8
+                reward += (self.state[agent]["speed"] - self.foiling_drop_speed) * 0.6
             else:
-                reward -= 1.0
+                reward -= 0.9
             if self.state[agent]["speed"] < self.foiling_drop_speed:
-                reward -= 2.0
+                reward -= 1.5
 
             if distance_delta > 0:
-                reward += self.state[agent]["speed"] * 0.2
+                reward += self.state[agent]["speed"] * 0.15
 
             if dist_to_target < self.best_distance[agent]:
                 self.best_distance[agent] = dist_to_target
@@ -510,7 +510,7 @@ class ImprovedSailingEnv(ParallelEnv):
                 or by < 0
                 or by > self.field_length
             ):
-                reward -= 1000.0
+                reward -= 600.0
                 terminated = True
                 self.state[agent]["termination_reason"] = "out_of_bounds"
 
@@ -526,7 +526,7 @@ class ImprovedSailingEnv(ParallelEnv):
                 # Se la barca perde oltre 150 metri rispetto alla massima quota Y raggiunta, 
                 # sta navigando all'indietro o compiendo un loop mortale.
                 if by < self.state[agent]["max_y_reached"] - 150.0:
-                    reward -= 500.0
+                    reward -= 300.0
                     terminated = True
                     self.state[agent]["termination_reason"] = "anti_loop_penalty"
 
@@ -536,7 +536,7 @@ class ImprovedSailingEnv(ParallelEnv):
                     self.state[agent]["min_y_reached"] = by
 
                 if by > self.state[agent]["min_y_reached"] + 150.0:
-                    reward -= 500.0
+                    reward -= 300.0
                     terminated = True
                     self.state[agent]["termination_reason"] = "anti_loop_penalty"
 
@@ -545,13 +545,13 @@ class ImprovedSailingEnv(ParallelEnv):
                 if by >= self.bottom_gate_y:
                     if gate_left <= bx <= gate_right:
                         self.state[agent]["current_leg"] = 1
-                        reward += 500.0  # Ottima partenza
+                        reward += 300.0  # Partenza superata (×3)
                         # Target successivo: Boa di Bolina
                         self.target[agent] = np.array([self.round_marks[agent]["x"], self.top_gate_y])
                         pos = np.array([self.state[agent]["x"], self.state[agent]["y"]])
                         self.best_distance[agent] = float(np.linalg.norm(pos - self.target[agent]))
                     else:
-                        reward -= 1000.0
+                        reward -= 600.0
                         terminated = True
                         self.state[agent]["termination_reason"] = "missed_start_gate"
 
@@ -559,7 +559,7 @@ class ImprovedSailingEnv(ParallelEnv):
                 if by >= self.top_gate_y and gate_left <= bx <= gate_right:
                     self.state[agent]["current_leg"] = 2
                     self.state[agent]["min_y_reached"] = by
-                    reward += 1500.0  # Boa Superata (Aumentato)
+                    reward += 900.0  # Boa Superata (×3)
                     self.state[agent]["post_round_pending"] = True
 
                     ext_offset = 60.0
@@ -597,7 +597,7 @@ class ImprovedSailingEnv(ParallelEnv):
                     efficiency = (
                         max(0, self.max_steps - self.step_count) / self.max_steps
                     )
-                    reward += 5000.0 + efficiency * 2000.0
+                    reward += 3000.0 + efficiency * 1500.0
                     terminated = True
                     self.state[agent]["steps_to_target"] = self.step_count
                     self.state[agent]["termination_reason"] = "finished_race"
@@ -609,7 +609,7 @@ class ImprovedSailingEnv(ParallelEnv):
                     self.best_distance[agent] / max(self.previous_distance[agent], 1.0)
                 )
                 if progress > 0:
-                    reward += progress * 200.0
+                    reward += progress * 150.0
 
             # Conclusione e scrittura dizionari output base
             termination_reason = self.state[agent].get("termination_reason", None)
@@ -654,8 +654,8 @@ class ImprovedSailingEnv(ParallelEnv):
                     dist = float(np.linalg.norm([dx, dy]))
                     if dist < collision_radius:
                         terminations[a1], terminations[a2] = True, True
-                        rewards[a1] -= 1000.0
-                        rewards[a2] -= 1000.0
+                        rewards[a1] -= 600.0
+                        rewards[a2] -= 600.0
                         self.state[a1]["termination_reason"] = "collision"
                         self.state[a2]["termination_reason"] = "collision"
                         infos[a1]["terminated"] = True
