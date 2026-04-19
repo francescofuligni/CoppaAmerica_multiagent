@@ -26,8 +26,13 @@ class ImprovedSailingEnv(ParallelEnv):
 
     def __init__(self, field_size=2500, render_mode=None):
         super().__init__()
-        
-        self.field_size = field_size
+
+        # Geometria mappa (rettangolare)
+        self.field_length = 4075.0
+        self.field_width = 1482.0
+        self.field_diag = float(np.sqrt(self.field_width ** 2 + self.field_length ** 2))
+        # Manteniamo field_size per retrocompatibilita' con eventuale codice esterno.
+        self.field_size = max(self.field_width, self.field_length)
         self.max_speed = 50.0  # Increased for foiling speeds
         self.max_wind = 30.0
         self.target_radius = 50.0  # Kept small relative to field to require precision
@@ -85,9 +90,9 @@ class ImprovedSailingEnv(ParallelEnv):
         self.rounding_max_retries = 2
 
         # --- Costanti del Campo di Regata (Windward-Leeward) ---
-        self.course_center_x = self.field_size / 2.0
-        self.boundaries = {'x_min': 500.0, 'x_max': 2000.0}
-        self.top_gate_y = 2300.0
+        self.course_center_x = self.field_width / 2.0
+        self.boundaries = {'x_min': 0.0, 'x_max': self.field_width}
+        self.top_gate_y = self.field_length - 200.0
         self.bottom_gate_y = 200.0
         self.gate_width = 300.0
 
@@ -104,7 +109,7 @@ class ImprovedSailingEnv(ParallelEnv):
         
         self.state = {}
         self.target = {}
-        self.wind_field = WindField(field_size=field_size)
+        self.wind_field = WindField(field_size=int(max(self.field_width, self.field_length)))
         self.step_count = 0
         self.trajectory = {}
         self.previous_distance = {}
@@ -315,8 +320,11 @@ class ImprovedSailingEnv(ParallelEnv):
         opponent = next((a for a in self.possible_agents if a != agent), None)
         if opponent is not None and opponent in self.state:
             opp_pos = np.array([self.state[opponent]['x'], self.state[opponent]['y']], dtype=np.float32)
-            rel_vec = (opp_pos - pos) / self.field_size
-            opp_dist_norm = float(np.linalg.norm(opp_pos - pos) / (self.field_size * np.sqrt(2)))
+            rel_vec = np.array([
+                (opp_pos[0] - pos[0]) / self.field_width,
+                (opp_pos[1] - pos[1]) / self.field_length,
+            ], dtype=np.float32)
+            opp_dist_norm = float(np.linalg.norm(opp_pos - pos) / self.field_diag)
             speed_adv = float((self.state[agent]['speed'] - self.state[opponent]['speed']) / self.max_speed)
             rel_opp_x = float(np.clip(rel_vec[0], -1.0, 1.0))
             rel_opp_y = float(np.clip(rel_vec[1], -1.0, 1.0))
@@ -329,13 +337,13 @@ class ImprovedSailingEnv(ParallelEnv):
             speed_adv = 0.0
 
         obs = np.array([
-            self.state[agent]['x'] / self.field_size,            # [0, 1]
-            self.state[agent]['y'] / self.field_size,            # [0, 1]
+            self.state[agent]['x'] / self.field_width,           # [0, 1]
+            self.state[agent]['y'] / self.field_length,          # [0, 1]
             self.state[agent]['speed'] / self.max_speed,         # [0, 1]
             np.sin(heading), np.cos(heading),                    # [-1, 1]
             np.sin(apparent_wind), np.cos(apparent_wind),        # [-1, 1]
             local_wind_speed / self.max_wind,                    # [0, 1]
-            dist_to_target / (self.field_size * np.sqrt(2)),     # [0, 1]
+            dist_to_target / self.field_diag,                    # [0, 1]
             np.sin(rel_bearing), np.cos(rel_bearing),            # [-1, 1]
             float(self.state[agent]['rudder_angle']),             # [-1, 1]
             trim_level_to_action(self.state[agent]['sail_trim']), # [-1, 1]
@@ -631,7 +639,7 @@ class ImprovedSailingEnv(ParallelEnv):
             if opponent is not None and opponent in self.state:
                 opp_pos = np.array([self.state[opponent]['x'], self.state[opponent]['y']], dtype=np.float32)
                 opp_dist_to_target = float(np.linalg.norm(opp_pos - self.target[opponent]))
-                tactical_advantage = (opp_dist_to_target - dist_to_target) / self.field_size
+                tactical_advantage = (opp_dist_to_target - dist_to_target) / self.field_diag
                 reward += float(np.clip(tactical_advantage, -1.0, 1.0)) * 1.5
 
             # Shaping diretto per direzione di gamba sulla coordinata Y.
@@ -709,7 +717,7 @@ class ImprovedSailingEnv(ParallelEnv):
                 self.state[agent]['boundary_outside_steps'] = 0
                 
             # Fuori mappa totale: hard-fail.
-            if bx < 0 or bx > self.field_size or by < 0 or by > self.field_size:
+            if bx < 0 or bx > self.field_width or by < 0 or by > self.field_length:
                 reward -= self.hard_violation_penalty
                 terminated = True
                 self.state[agent]['termination_reason'] = 'out_of_bounds'
@@ -871,8 +879,8 @@ class ImprovedSailingEnv(ParallelEnv):
 
         self.fig.clf() # Fully clear the figure to avoid frame overlapping
         self.ax = self.fig.add_subplot(111)
-        self.ax.set_xlim(0, self.field_size)
-        self.ax.set_ylim(0, self.field_size)
+        self.ax.set_xlim(0, self.field_width)
+        self.ax.set_ylim(0, self.field_length)
         self.ax.set_aspect('equal')
         self.ax.grid(True, alpha=0.3)
         self.ax.set_facecolor('#a0d8ef')
@@ -886,8 +894,8 @@ class ImprovedSailingEnv(ParallelEnv):
         colors_map = {'red_boat': 'red', 'blue_boat': 'blue'}
         
         # --- Disegna Boundaries (Confini) ---
-        self.ax.plot([self.boundaries['x_min'], self.boundaries['x_min']], [0, self.field_size], 'r--', linewidth=2, alpha=0.5, label='Boundary')
-        self.ax.plot([self.boundaries['x_max'], self.boundaries['x_max']], [0, self.field_size], 'r--', linewidth=2, alpha=0.5)
+        self.ax.plot([self.boundaries['x_min'], self.boundaries['x_min']], [0, self.field_length], 'r--', linewidth=2, alpha=0.5, label='Boundary')
+        self.ax.plot([self.boundaries['x_max'], self.boundaries['x_max']], [0, self.field_length], 'r--', linewidth=2, alpha=0.5)
 
         # --- Disegna Gates (Cancelli) ---
         gate_left = self.course_center_x - self.gate_width / 2.0

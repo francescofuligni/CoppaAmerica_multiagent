@@ -1,0 +1,73 @@
+# Configurazione centralizzata (stile branch dynamic)
+# Valori allineati al progetto locale corrente.
+
+run:
+  steps: 500000
+  n_envs: 12
+  model_name: "sailing_ppo_improved"
+  video_file: "videos/sailing_demo.mp4"
+
+training:
+  # Nel codice locale il training usa ppo_preset.
+  # Preset disponibili: legacy, safe_optimized
+  ppo_preset: "safe_optimized"
+
+  # Valori effettivi preset safe_optimized (default locale)
+  learning_rate: 0.0003
+  n_steps: 1024
+  batch_size: 512
+  gamma: 0.995
+
+  # Parametri comuni locali
+  n_epochs: 10
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.01
+
+  # Callback locale
+  success_window_size: 100
+  success_threshold_pct: 1.0
+  window_size: 200
+
+  # In locale non c'e frame stacking
+  frame_stack: 1
+
+physics:
+  # Geometria mappa locale attuale
+  field_width: 1482.0
+  field_length: 4075.0
+  top_gate_y: 3875.0
+  bottom_gate_y: 200.0
+  gate_width: 300.0
+
+  # Dinamica locale
+  max_turn_per_step_deg: 25
+  min_turn_factor: 0.12
+  max_trim_delta_per_step: 0.10
+  default_trim_level: 0.60
+  foiling_takeoff_speed: 18.0
+  foiling_drop_speed: 15.0
+  displacement_inertia: 0.85
+  foiling_inertia: 0.98
+
+  # Collision/penalita locali
+  collision_radius: 20.0
+  near_collision_radius: 40.0
+  max_collision_correction: 6.0
+  collision_penalty_scale: 20.0
+  near_collision_penalty_scale: 3.0
+  port_tack_collision_multiplier: 1.6
+  ttc_horizon: 4.0
+  ttc_penalty_scale: 5.0
+  hard_violation_penalty: 10000.0
+  hard_rules_warmup_steps: 20000
+  boundary_hard_after_steps: 15
+  spin_window_len: 30
+  spin_turn_threshold_deg: 450.0
+  spin_min_progress: 0.0
+  rounding_grace_steps: 20
+  rounding_step_penalty_scale: 0.35
+  rounding_step_penalty_cap: 20.0
+  rounding_timeout_steps: 120
+  rounding_retry_penalty: 350.0
+  rounding_max_retries: 2
