@@ -213,6 +213,7 @@ Esegui i test automatici con:
 - Prima di iniziare a lavorare: `git pull` e `source .venv/bin/activate`
 - Ogni nuova funzionalità va su una branch dedicata (`feature/nome-funzionalità`)
 - Per aggiungere dipendenze: aggiornare anche `requirements.txt` con `pip freeze > requirements.txt` (o aggiungere manualmente solo le nuove)
+- Spiegazione dei file duplicati e di quando usare la versione originale o la versione dynamic: [DOPPIONI_FILE_E_USO.md](DOPPIONI_FILE_E_USO.md)
 
 ### Novità Fisiche e di Regolamento
 
