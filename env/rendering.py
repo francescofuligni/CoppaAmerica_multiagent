@@ -151,7 +151,7 @@ class SailingRenderer:
                 fontsize=10, weight='bold'
             )
 
-            # --- Box info vento ---
+            # --- Box info vento (centrato a sinistra) ---
             wind_text = (
                 f"Wind (base)\n"
                 f"Dir: {(90 - np.degrees(self.env.wind_field.base_direction)) % 360:.0f}\u00b0\n"
@@ -160,16 +160,15 @@ class SailingRenderer:
                 f"Dir: {wind_deg:.0f}°\n"
                 f"Speed: {local_ws:.1f} kts"
             )
-            self.ax.text(
-                1.02, 0.98, wind_text,
-                transform=self.ax.transAxes,
-                fontsize=8, verticalalignment='top', horizontalalignment='left',
+            self.fig.text(
+                0.18, 0.5, wind_text,
+                fontsize=8, verticalalignment='center', horizontalalignment='center',
                 bbox=dict(boxstyle='round,pad=0.4', facecolor='lightyellow', alpha=0.85, edgecolor='gray'),
                 family='monospace'
             )
 
-            # --- Rosa dei venti ---
-            inset_ax = self.fig.add_axes([0.78, 0.78, 0.16, 0.16], polar=True)
+            # --- Rosa dei venti (centrata a destra) ---
+            inset_ax = self.fig.add_axes([0.74, 0.42, 0.16, 0.16], polar=True)
             inset_ax.set_theta_zero_location('N')
             inset_ax.set_theta_direction(-1)
             inset_ax.set_rticks([])

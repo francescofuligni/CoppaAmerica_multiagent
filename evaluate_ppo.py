@@ -51,30 +51,40 @@ def create_video(
 
     raw_env.reset = custom_reset
 
-    raw_env = ss.black_death_v3(raw_env)
-    venv = ss.pettingzoo_env_to_vec_env_v1(raw_env)
-    venv = ss.concat_vec_envs_v1(venv, 1, num_cpus=0, base_class="stable_baselines3")
-    venv = VecMonitor(venv)
     n_stack = train_cfg.get("frame_stack", 4)
-    venv = VecFrameStack(venv, n_stack=n_stack)
+    # Applichiamo il frame stacking a livello di PettingZoo ParallelEnv
+    # Questo mantiene la compatibilità con l'input della rete neurale [n_stack * 20]
+    raw_env = ss.frame_stack_v1(raw_env, n_stack)
 
-    obs = venv.reset()
+    observations, infos = raw_env.reset()
+    
     import warnings
-
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        frames = [venv.render()]
+        frames = [raw_env.render()]
+    
     step = 0
+    while step < raw_env.unwrapped.max_steps:
+        actions = {}
+        # Predici le azioni per ogni agente ancora attivo
+        for agent in raw_env.agents:
+            obs = observations[agent]
+            action, _ = model.predict(obs, deterministic=True)
+            actions[agent] = action
+        
+        if not actions:
+            break
 
-    while step < raw_env.max_steps:
-        actions, _ = model.predict(obs, deterministic=True)
-        obs, rewards, dones, infos = venv.step(actions)
+        observations, rewards, terminations, truncations, infos = raw_env.step(actions)
+        
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            frames.append(venv.render())
+            frames.append(raw_env.render())
+        
         step += 1
 
-        if all(dones):
+        # Interrompi non appena una barca vince o l'episodio finisce (fallimento o timeout)
+        if any(terminations.values()) or any(truncations.values()):
             break
 
     # Salva il video
@@ -88,7 +98,7 @@ def create_video(
             "Assicurati di avere il plugin imageio-ffmpeg installato: pip install imageio[ffmpeg]"
         )
 
-    venv.close()
+    raw_env.close()
 
 
 def create_multi_video(
