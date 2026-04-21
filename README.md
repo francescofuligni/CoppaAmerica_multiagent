@@ -82,7 +82,7 @@ python main.py --train-new --steps 500000 --n-envs 8
 #### Generazione Video Singolo
 Usa in automatico l'ultima versione del modello per generare un video della regata.
 ```bash
-python main.py --video-file videos/mio_test.mp4
+python main.py --video-file videos/my_test.mp4
 ```
 
 #### Generazione Video Multiplo (5 Seed diversi)
