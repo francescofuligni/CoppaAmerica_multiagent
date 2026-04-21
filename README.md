@@ -35,46 +35,66 @@ pip install -r requirements.txt
 
 ---
 
-## Variabili d'ambiente
+## Configurazione (config.yaml)
 
-Crea un file `.env` nella root del progetto (non viene tracciato da git):
+Tutti i parametri nevralgici del progetto (passi di training, numero di ambienti, iperparametri RL e costanti fisiche) sono centralizzati nel file `config.yaml`. Questo permette di modificare il setup senza toccare il codice.
 
-```ini
-TOTAL_TIMESTEPS=500000
-N_ENVS=4
-MODEL_PATH=models/sailing_ppo_realistic_until100
-VIDEO_FILE=videos/sailing_realistic_until100.mp4
-TENSORBOARD_LOG=./sailing_tensorboard/
+```yaml
+run:
+  steps: 1000000
+  n_envs: 14
+  model_name: "sailing_model"
+  video_file: "videos/sailing_demo.mp4"
+
+training:
+  learning_rate: 0.0002
+  frame_stack: 4
+  # ... altri iperparametri
 ```
-
-Un template è già incluso come `.env.example` (quando lo creerete).
 
 ---
 
-## Avvio
+## Avvio e Utilizzo
 
-Assicurati di avere l'ambiente virtuale attivo (`source .venv/bin/activate`).
+Assicurati di avere l'ambiente virtuale attivo (`source .venv/bin/activate`). Il sistema utilizza un **versionamento automatico** intelligente per i modelli (es. `sailing_model.zip`, `sailing_model_2.zip`).
 
-### Training + video (default)
+### 1. Addestramento (Training)
+
+#### Creare un NUOVO Modello
+Parte da zero e crea la versione numerata successiva. Pulisce automaticamente i vecchi checkpoint temporanei.
 ```bash
-.venv/bin/python main.py
+python main.py --train-new
 ```
 
-### Solo training (forza il ricalcolo anche se il modello esiste già)
+#### Riprendere l'ultimo training
+Carica l'ultima versione del modello trovata in `models/` e continua l'addestramento.
 ```bash
-.venv/bin/python main.py --train --steps 500000 --n-envs 4
+python main.py --train-resume
 ```
 
-### Solo video (usa un modello già salvato)
+Puoi sovrascrivere i parametri del `config.yaml` direttamente da terminale:
 ```bash
-.venv/bin/python main.py --model-path models/sailing_ppo_realistic_until100 --video-file videos/sailing_realistic_until100.mp4
+python main.py --train-new --steps 500000 --n-envs 8
 ```
 
-> Nota compatibilità: se cambi observation/action space (es. introduzione trim vele), è consigliato rilanciare il training con `--train` per ottenere una policy pienamente coerente.
+### 2. Test e Valutazione
 
-### Visualizzare le curve di training con TensorBoard
+#### Generazione Video Singolo
+Usa in automatico l'ultima versione del modello per generare un video della regata.
 ```bash
-.venv/bin/python -m tensorboard.main --logdir ./sailing_tensorboard/
+python main.py --video-file videos/mio_test.mp4
+```
+
+#### Generazione Video Multiplo (5 Seed diversi)
+Testa la robustezza del modello su 5 diverse condizioni iniziali/di vento.
+```bash
+python main.py --test-multi
+```
+
+### 3. Monitoraggio (TensorBoard)
+Visualizza le curve di apprendimento in tempo reale.
+```bash
+python -m tensorboard.main --logdir ./sailing_tensorboard/
 ```
 
 ---
@@ -84,20 +104,19 @@ Assicurati di avere l'ambiente virtuale attivo (`source .venv/bin/activate`).
 ```
 CoppaAmerica_multiagent/
 │
-├── main.py               # Entry point CLI: avvia training e/o generazione video
-├── train_ppo.py          # Training PPO con ambienti paralleli (SuperSuit + SB3)
-├── evaluate_ppo.py       # Carica il modello e genera il video MP4
-├── sailing_env.py        # Ambiente PettingZoo (logica di gioco, reward, render)
-├── sail_trim.py          # Modello aerodinamico semplificato del trim vele
-├── wind_model.py         # Campo di vento 2D con random walk (modulo separato)
-├── callbacks.py          # Callback SB3: traccia success rate e distanza media
+├── main.py               # Entry point CLI: gestione training (new/resume) e test
+├── train_ppo.py          # Logica di training PPO, VecFrameStack e caricamento YAML
+├── evaluate_ppo.py       # Valutazione modello e generazione video MP4
+├── config.yaml           # Configurazione centralizzata (iperparametri e fisica)
+├── callbacks.py          # Callback custom (SuccessTracking e CleanCheckpoint)
+├── core/                 # Core della fisica navale e modelli aerodinamici
+├── env/                  # Definizione ambiente PettingZoo
 │
-├── models/               # Modelli salvati (.zip) — NON su git
-├── videos/               # Video output (.mp4) — NON su git
-├── sailing_tensorboard/  # Log TensorBoard — NON su git
+├── models/               # Modelli salvati (.zip) e cartella checkpoints/
+├── videos/               # Output video delle regate
+├── sailing_tensorboard/  # Log per la visualizzazione delle metriche
 │
-├── requirements.txt      # Dipendenze Python
-├── .env                  # Variabili d'ambiente locali — NON su git
+├── requirements.txt      # Dipendenze del progetto
 └── .gitignore
 ```
 
