@@ -1,10 +1,11 @@
-"""
-sail_trim.py
-Modello semplice ma stabile per il trim vele in funzione del True Wind Angle (TWA).
+"""Modello per la regolazione delle vele in funzione del True Wind Angle (TWA).
+
+Il modello gestisce la conversione tra le azioni della policy e i livelli di trim reali,
+calcolando l'efficienza basata sullo scostamento dal valore ottimale.
 
 Convenzioni:
-- trim in [0, 1] (0 = vele molto lasche, 1 = vele molto cazzate)
-- input policy in [-1, 1] viene convertito in [0, 1]
+    - Livello di trim: [0, 1] (0 = vele molto lasche, 1 = vele molto cazzate).
+    - Azione policy: [-1, 1] (mappata linearmente sul livello di trim).
 """
 
 from __future__ import annotations
@@ -13,7 +14,17 @@ import numpy as np
 
 
 def normalize_twa_deg(apparent_wind_angle: float) -> float:
-    """Converte l'angolo in gradi assoluti [0, 180]."""
+    """Converte l'angolo del vento in gradi assoluti [0, 180].
+
+    L'angolo risultante rappresenta lo scostamento simmetrico rispetto alla prua,
+    indipendentemente dalle mura (mura a dritta o mura a sinistra).
+
+    Args:
+        apparent_wind_angle: Angolo del vento in radianti.
+
+    Returns:
+        Angolo normalizzato in gradi nell'intervallo [0, 180].
+    """
     diff = apparent_wind_angle % (2 * np.pi)
     if diff > np.pi:
         diff = 2 * np.pi - diff
@@ -21,7 +32,17 @@ def normalize_twa_deg(apparent_wind_angle: float) -> float:
 
 
 def optimal_trim_for_twa(twa_deg: float, is_foiling: bool) -> float:
-    """Restituisce il trim ideale in [0, 1] per il TWA dato."""
+    """Determina il livello di trim ideale per un dato angolo del vento (TWA).
+
+    Utilizza un'interpolazione lineare basata su punti predefiniti (polare del trim).
+
+    Args:
+        twa_deg: Angolo del vento in gradi [0, 180].
+        is_foiling: Se l'imbarcazione è in volo (foiling).
+
+    Returns:
+        Il livello di trim ottimale nell'intervallo [0, 1].
+    """
     points = (
         # (TWA deg, trim)
         [(45.0, 0.98), (65.0, 0.85), (90.0, 0.68), (130.0, 0.45), (160.0, 0.30), (180.0, 0.22)]
@@ -35,19 +56,36 @@ def optimal_trim_for_twa(twa_deg: float, is_foiling: bool) -> float:
 
 
 def trim_efficiency(trim_value: float, optimal_trim: float, is_foiling: bool) -> float:
-    """
-    Misura efficienza del trim in [0, 1].
-    In foiling la sensibilita' all'errore e' maggiore.
+    """Calcola l'efficienza della regolazione delle vele.
+
+    L'efficienza segue una curva gaussiana centrata sul valore di trim ottimale.
+    In modalità foiling, la sensibilità all'errore è maggiore.
+
+    Args:
+        trim_value: Livello di trim attuale [0, 1].
+        optimal_trim: Livello di trim ideale per l'andatura corrente.
+        is_foiling: Se l'imbarcazione è in volo (foiling).
+
+    Returns:
+        Valore di efficienza nell'intervallo [0, 1].
     """
     error = abs(float(trim_value) - float(optimal_trim))
     sigma = 0.12 if is_foiling else 0.16
-    # Curva gaussiana: 1.0 in centro, decrescita dolce lontano dall'ottimo.
+    # Curva gaussiana: 1.0 centro, decrescita dolce lontano dall'ottimo.
     eff = np.exp(-0.5 * (error / sigma) ** 2)
     return float(np.clip(eff, 0.0, 1.0))
 
 
 def trim_speed_multiplier(efficiency: float, is_foiling: bool) -> float:
-    """Converte l'efficienza trim in moltiplicatore velocita'."""
+    """Converte l'efficienza del trim in un moltiplicatore di velocità.
+
+    Args:
+        efficiency: Efficienza calcolata [0, 1].
+        is_foiling: Se l'imbarcazione è in volo (foiling).
+
+    Returns:
+        Moltiplicatore applicato alla velocità base della polare.
+    """
     if is_foiling:
         # Foiling: premio forte all'allineamento perfetto, decadimento netto se fuori trim.
         return float(0.60 + 0.65 * efficiency)
@@ -56,10 +94,24 @@ def trim_speed_multiplier(efficiency: float, is_foiling: bool) -> float:
 
 
 def action_to_trim_level(trim_action: float) -> float:
-    """Mappa azione policy [-1, 1] in livello trim [0, 1]."""
+    """Mappa l'azione della policy nel livello di trim reale.
+
+    Args:
+        trim_action: Azione proveniente dalla rete neurale in [-1, 1].
+
+    Returns:
+        Livello di trim corrispondente in [0, 1].
+    """
     return float(np.clip((trim_action + 1.0) * 0.5, 0.0, 1.0))
 
 
 def trim_level_to_action(trim_level: float) -> float:
-    """Mappa livello trim [0, 1] in azione policy [-1, 1]."""
+    """Mappa un livello di trim reale nell'azione della policy.
+
+    Args:
+        trim_level: Livello di trim della barca in [0, 1].
+
+    Returns:
+        Azione normalizzata in [-1, 1].
+    """
     return float(np.clip(trim_level * 2.0 - 1.0, -1.0, 1.0))

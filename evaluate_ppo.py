@@ -2,7 +2,7 @@ import os
 import numpy as np
 import imageio
 from stable_baselines3 import PPO
-from sailing_env import ImprovedSailingEnv
+from env.sailing_env import ImprovedSailingEnv
 
 
 def _adapt_obs_for_model(obs_vector: np.ndarray, expected_dim: int) -> np.ndarray:

@@ -4,7 +4,7 @@ from stable_baselines3.common.vec_env import VecMonitor
 import supersuit as ss
 
 # Importazioni Locali
-from sailing_env import ImprovedSailingEnv
+from env.sailing_env import ImprovedSailingEnv
 from callbacks import SuccessTrackingCallback
 
 def train_model(

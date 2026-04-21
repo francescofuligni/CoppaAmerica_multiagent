@@ -11,7 +11,7 @@ from stable_baselines3 import PPO
 # Moduli locali
 from train_ppo import train_model
 from evaluate_ppo import create_video, create_multi_video
-from sailing_env import ImprovedSailingEnv
+from env.sailing_env import ImprovedSailingEnv
 
 
 def is_model_compatible(model_path: str) -> bool:
