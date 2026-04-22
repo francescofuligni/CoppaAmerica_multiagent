@@ -21,7 +21,7 @@ __pycache__/
 sailing_tensorboard/
 logs/
 checkpoints/
-videos/
+# videos/
 # *.zip
 # !sailing_model.zip
 
