@@ -7,8 +7,6 @@
 .venv/
 /.venv
 venv/
-ENV/
-env/
 
 # Python
 __pycache__/
@@ -20,15 +18,12 @@ __pycache__/
 .ipynb_checkpoints
 
 # Project Specific Output
-models/
-videos/
 sailing_tensorboard/
 logs/
 checkpoints/
-*.zip
-#*.mp4
-*.gif
-*.avi
+# videos/
+# *.zip
+# !sailing_model.zip
 
 # IDE
 .idea/

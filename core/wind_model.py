@@ -1,45 +1,29 @@
-"""
-wind_model.py
-Campo di vento 2D con random walk temporale e spaziale.
+"""Modello del campo di vento 2D con dinamiche temporali e spaziali.
 
-- Vento "base" globale che evolve lentamente (random walk)
-- Griglia NxN di perturbazioni locali che evolvono indipendentemente (mean-reverting)
-- Interpolazione bilineare per ottenere il vento in qualsiasi punto (x, y)
-
-Uso:
-    wind = WindField(field_size=400)
-    wind.reset(np_random, base_direction=1.2)
-
-    # ogni step dell'ambiente:
-    wind.step()
-    direction, speed = wind.get_local_wind(x, y)
+Il sistema implementa:
+    - Vento "base" globale che evolve lentamente tramite random walk.
+    - Griglia NxN di perturbazioni locali che evolvono in modo stocastico (mean-reverting).
+    - Interpolazione bilineare per determinare direzione e velocità in qualsiasi punto (x, y).
 """
 
 import numpy as np
 from typing import Optional
 
 class WindField:
-    """
-    Campo di vento 2D con random walk.
+    """Gestisce la simulazione stocastica del campo di vento.
 
-    Parameters
-    ----------
-    field_size : float
-        Dimensione del campo di gioco (metros). Default 400.
-    grid_n : int
-        Numero di celle per lato della griglia spaziale. Default 10.
-    base_speed_range : tuple
-        Intervallo (min, max) della velocità del vento base in nodi. Default (10, 18).
-    temporal_drift_dir : float
-        Massima variazione di direzione base per step (rad). Default 0.02.
-    temporal_drift_speed : float
-        Massima variazione di velocità base per step (kts). Default 0.3.
-    spatial_std_dir : float
-        Deviazione standard iniziale delle perturbazioni di direzione (rad). Default 0.15.
-    spatial_std_speed : float
-        Deviazione standard iniziale delle perturbazioni di velocità (kts). Default 2.0.
-    spatial_corr : float
-        Coefficiente di mean-reversion spaziale (0-1). Più alto = più persistenza. Default 0.95.
+    Il vento è composto da un vettore base globale e da fluttuazioni locali
+    gestite tramite una griglia spaziale interpolata bilinearmente.
+
+    Args:
+        field_size: Dimensione del campo di regata in metri.
+        grid_n: Numero di celle per lato della griglia di perturbazione.
+        base_speed_range: Intervallo (min, max) per la velocità base in nodi.
+        temporal_drift_dir: Massima variazione di direzione base per step (rad).
+        temporal_drift_speed: Massima variazione di velocità base per step (nodi).
+        spatial_std_dir: Deviazione standard delle perturbazioni della direzione (rad).
+        spatial_std_speed: Deviazione standard delle perturbazioni della velocità (nodi).
+        spatial_corr: Coefficiente di persistenza spaziale (mean-reversion).
     """
 
     def __init__(
@@ -62,27 +46,19 @@ class WindField:
         self.spatial_std_speed = spatial_std_speed
         self.spatial_corr = spatial_corr
 
-        # Stato interno (inizializzato in reset)
+        # Stato interno
         self.base_direction: float = 0.0
         self.base_speed: float = float(np.mean(base_speed_range))
         self._delta_dir: np.ndarray = np.zeros((grid_n, grid_n))
         self._delta_speed: np.ndarray = np.zeros((grid_n, grid_n))
         self._rng = np.random.default_rng()
 
-    # ------------------------------------------------------------------
-    # API pubblica
-    # ------------------------------------------------------------------
-
     def reset(self, np_random, base_direction: Optional[float] = None) -> None:
-        """
-        Reimposta il campo di vento.
+        """Inizializza o reimposta il campo di vento.
 
-        Parameters
-        ----------
-        np_random : gymnasium.utils.seeding.np_random
-            RNG condiviso con l'ambiente.
-        base_direction : float | None
-            Direzione base iniziale (rad). Se None, viene scelta casualmente.
+        Args:
+            np_random: Generatore di numeri casuali (condiviso con l'ambiente).
+            base_direction: Direzione base iniziale in radianti. Se assente, è casuale.
         """
         self._rng = np_random
 
@@ -93,7 +69,7 @@ class WindField:
         else:
             self.base_direction = float(np_random.uniform(0, 2 * np.pi))
 
-        # Perturbazioni spaziali iniziali (distribuzione normale)
+        # Inizializzazione perturbazioni spaziali (distribuzione normale)
         self._delta_dir = np_random.normal(
             0.0, self.spatial_std_dir, (self.grid_n, self.grid_n)
         ).astype(np.float32)
@@ -102,15 +78,14 @@ class WindField:
         ).astype(np.float32)
 
     def step(self) -> None:
-        """
-        Avanza la simulazione del vento di un timestep.
+        """Avanza la simulazione del vento di un passo temporale.
 
-        - Il vento base compie un random walk lento (direzione e velocità).
-        - Le perturbazioni spaziali compiono un random walk mean-reverting verso 0.
+        Aggiorna il vento base tramite random walk e le perturbazioni locali
+        tramite un processo mean-reverting verso lo zero.
         """
         rng = self._rng
 
-        # --- Random walk del vento base ---
+        # Evoluzione del vento base
         self.base_direction += float(
             rng.uniform(-self.temporal_drift_dir, self.temporal_drift_dir)
         )
@@ -123,14 +98,14 @@ class WindField:
             np.clip(self.base_speed, 15.0, self.base_speed_range[1])
         )
 
-        # --- Random walk mean-reverting delle perturbazioni spaziali ---
+        # Evoluzione delle perturbazioni locali
         noise_dir = rng.normal(0, self.spatial_std_dir * 0.1, (self.grid_n, self.grid_n))
         noise_speed = rng.normal(0, self.spatial_std_speed * 0.1, (self.grid_n, self.grid_n))
 
         self._delta_dir = (self.spatial_corr * self._delta_dir + noise_dir).astype(np.float32)
         self._delta_speed = (self.spatial_corr * self._delta_speed + noise_speed).astype(np.float32)
 
-        # Clamp per evitare valori estremi
+        # Taglio dei valori estremi (clamping)
         self._delta_dir = np.clip(
             self._delta_dir, -self.spatial_std_dir * 2.5, self.spatial_std_dir * 2.5
         )
@@ -139,25 +114,30 @@ class WindField:
         )
 
     def get_local_wind(self, x: float, y: float) -> tuple[float, float]:
-        """
-        Restituisce (direction, speed) del vento nella posizione (x, y)
-        tramite interpolazione bilineare della griglia.
+        """Calcola la direzione e la velocità del vento in una posizione specifica.
 
-        Returns
-        -------
-        direction : float  [0, 2π)
-        speed     : float  [3, 30] kts
+        Esegue un'interpolazione bilineare basata sui valori dei nodi della griglia
+        circostanti la posizione (x, y).
+
+        Args:
+            x: Coordinata X.
+            y: Coordinata Y.
+
+        Returns:
+            Una tupla (direzione, velocità) dove:
+                - direzione: Angolo in radianti [0, 2π).
+                - velocità: Intensità in nodi [15, 30].
         """
         n = self.grid_n
 
-        # Posizione normalizzata nella griglia
+        # Calcolo indici normalizzati sulla griglia
         gx = float(np.clip(x / self.field_size * (n - 1), 0, n - 1 - 1e-9))
         gy = float(np.clip(y / self.field_size * (n - 1), 0, n - 1 - 1e-9))
 
         ix, iy = int(gx), int(gy)
         fx, fy = gx - ix, gy - iy
 
-        # Interpolazione bilineare (direzione)
+        # Interpolazione bilineare della perturbazione di direzione
         local_delta_dir = (
             self._delta_dir[ix, iy]     * (1 - fx) * (1 - fy)
             + self._delta_dir[ix + 1, iy]   * fx       * (1 - fy)
@@ -165,7 +145,7 @@ class WindField:
             + self._delta_dir[ix + 1, iy + 1] * fx     * fy
         )
 
-        # Interpolazione bilineare (velocità)
+        # Interpolazione bilineare della perturbazione di velocità
         local_delta_speed = (
             self._delta_speed[ix, iy]     * (1 - fx) * (1 - fy)
             + self._delta_speed[ix + 1, iy]   * fx       * (1 - fy)
@@ -179,13 +159,15 @@ class WindField:
         return float(direction), speed
 
     def get_grid_arrows(self, n_arrows: int = 8) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Utility per il rendering: restituisce coordinate e componenti delle frecce vento.
+        """Genera i vettori del vento per la visualizzazione grafica.
 
-        Returns
-        -------
-        xs, ys : coordinate degli arrow centers (n_arrows x n_arrows)
-        us, vs : componenti (u=est, v=nord) del vento
+        Args:
+            n_arrows: Numero di frecce per lato da visualizzare.
+
+        Returns:
+            Una tupla con quattro array numpy (xs, ys, us, vs):
+                - xs, ys: Coordinate dei centri delle frecce.
+                - us, vs: Componenti orizzontale e verticale del vettore velocità.
         """
         step = self.field_size / n_arrows
         xs, ys = np.meshgrid(

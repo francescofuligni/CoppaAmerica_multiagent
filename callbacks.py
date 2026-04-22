@@ -1,11 +1,52 @@
+import os
+import glob
 import numpy as np
-from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
+
+
+class CleanCheckpointCallback(CheckpointCallback):
+    """
+    Estensione di CheckpointCallback che mantiene solo gli ultimi N checkpoint,
+    eliminando automaticamente quelli più vecchi per risparmiare spazio su disco.
+    """
+
+    def __init__(
+        self,
+        save_freq: int,
+        save_path: str,
+        name_prefix: str = "rl_model",
+        keep_last: int = 3,
+        verbose: int = 0,
+    ):
+        super().__init__(save_freq, save_path, name_prefix, verbose=verbose)
+        self.keep_last = keep_last
+
+    def _on_step(self) -> bool:
+        result = super()._on_step()
+        if self.n_calls % self.save_freq == 0:
+            search_pattern = os.path.join(
+                self.save_path, f"{self.name_prefix}_*steps.zip"
+            )
+            list_of_files = glob.glob(search_pattern)
+            list_of_files.sort(key=os.path.getmtime)
+
+            if len(list_of_files) > self.keep_last:
+                for file_path in list_of_files[: -self.keep_last]:
+                    try:
+                        os.remove(file_path)
+                        if self.verbose > 0:
+                            print(f"[Cleanup] Rimosso vecchio checkpoint: {file_path}")
+                    except OSError:
+                        pass
+        return result
+
 
 class SuccessTrackingCallback(BaseCallback):
     """
     Callback robusta per ambienti multi-agente e vettoriali (parallelizzati con VecEnv).
     Tiene traccia di successi e distanze finali di ciascun agente.
     """
+
     def __init__(
         self,
         verbose=1,
@@ -13,6 +54,7 @@ class SuccessTrackingCallback(BaseCallback):
         target_radius=50.0,
         window_size=200,
         success_window=100,
+        success_threshold_pct=1.0,
         expected_agents=None,
         stop_on_perfect_window=True,
     ):
@@ -21,20 +63,28 @@ class SuccessTrackingCallback(BaseCallback):
         self.target_radius = target_radius
         self.window_size = window_size
         self.success_window = success_window
-        self.expected_agents = list(expected_agents) if expected_agents is not None else None
+        self.success_threshold_pct = success_threshold_pct
+        self.expected_agents = (
+            list(expected_agents) if expected_agents is not None else None
+        )
         self.stop_on_perfect_window = stop_on_perfect_window
         self.goal_reached = False
 
         # Dati: agent -> lista successi e distanze
         self.episode_successes = {}  # dict[agent] = lista successi
         self.episode_distances = {}  # dict[agent] = lista distanze
-        self.n_episodes = {}         # dict[agent] = totale episodi
+        self.n_episodes = {}  # dict[agent] = totale episodi
 
         # Metriche continue (rolling window)
         self.trim_eff_window = {}
         self.trim_error_window = {}
         self.vmg_window = {}
         self.speed_window = {}
+        self.collision_penalty_window = {}
+        self.near_collision_penalty_window = {}
+        self.ttc_penalty_window = {}
+        self.rounding_penalty_window = {}
+        self.termination_reason_counts = {}
 
     def _ensure_agent_buffers(self, agent: str) -> None:
         if agent in self.episode_successes:
@@ -46,6 +96,11 @@ class SuccessTrackingCallback(BaseCallback):
         self.trim_error_window[agent] = []
         self.vmg_window[agent] = []
         self.speed_window[agent] = []
+        self.collision_penalty_window[agent] = []
+        self.near_collision_penalty_window[agent] = []
+        self.ttc_penalty_window[agent] = []
+        self.rounding_penalty_window[agent] = []
+        self.termination_reason_counts[agent] = {}
 
     def _append_rolling(self, buffer, value: float) -> None:
         buffer.append(value)
@@ -56,29 +111,58 @@ class SuccessTrackingCallback(BaseCallback):
         """Consume metrics for one agent sample (supports both step and terminal records)."""
         self._ensure_agent_buffers(agent)
 
-        if 'trim_efficiency' in agent_info:
-            self._append_rolling(self.trim_eff_window[agent], float(agent_info['trim_efficiency']))
-        if 'trim_error' in agent_info:
-            self._append_rolling(self.trim_error_window[agent], float(agent_info['trim_error']))
-        if 'vmg' in agent_info:
-            self._append_rolling(self.vmg_window[agent], float(agent_info['vmg']))
-        if 'speed' in agent_info:
-            self._append_rolling(self.speed_window[agent], float(agent_info['speed']))
+        if "trim_efficiency" in agent_info:
+            self._append_rolling(
+                self.trim_eff_window[agent], float(agent_info["trim_efficiency"])
+            )
+        if "trim_error" in agent_info:
+            self._append_rolling(
+                self.trim_error_window[agent], float(agent_info["trim_error"])
+            )
+        if "vmg" in agent_info:
+            self._append_rolling(self.vmg_window[agent], float(agent_info["vmg"]))
+        if "speed" in agent_info:
+            self._append_rolling(self.speed_window[agent], float(agent_info["speed"]))
+        if "collision_penalty" in agent_info:
+            self._append_rolling(
+                self.collision_penalty_window[agent],
+                float(agent_info["collision_penalty"]),
+            )
+        if "near_collision_penalty" in agent_info:
+            self._append_rolling(
+                self.near_collision_penalty_window[agent],
+                float(agent_info["near_collision_penalty"]),
+            )
+        if "ttc_penalty" in agent_info:
+            self._append_rolling(
+                self.ttc_penalty_window[agent], float(agent_info["ttc_penalty"])
+            )
+        if "rounding_penalty" in agent_info:
+            self._append_rolling(
+                self.rounding_penalty_window[agent],
+                float(agent_info["rounding_penalty"]),
+            )
 
         # Conta episodio solo in evento finale.
-        is_terminal = bool(agent_info.get('terminated', False) or agent_info.get('truncated', False))
+        is_terminal = bool(
+            agent_info.get("terminated", False) or agent_info.get("truncated", False)
+        )
         if not is_terminal:
             return
 
-        final_dist = float(agent_info['distance_to_target'])
-        if 'finished_race' in agent_info:
-            success = bool(agent_info['finished_race'])
+        final_dist = float(agent_info["distance_to_target"])
+        if "finished_race" in agent_info:
+            success = bool(agent_info["finished_race"])
         else:
             success = final_dist < self.target_radius
 
         self.episode_successes[agent].append(success)
         self.episode_distances[agent].append(final_dist)
         self.n_episodes[agent] += 1
+        reason = str(agent_info.get("termination_reason", "unknown"))
+        self.termination_reason_counts[agent][reason] = (
+            self.termination_reason_counts[agent].get(reason, 0) + 1
+        )
 
         # Mantieni solo ultime N ep (N = max finestra metriche e finestra obiettivo)
         keep_n = max(100, self.success_window)
@@ -99,8 +183,9 @@ class SuccessTrackingCallback(BaseCallback):
             successes = self.episode_successes.get(agent, [])
             if len(successes) < self.success_window:
                 return False
-            recent = successes[-self.success_window:]
-            if sum(recent) != self.success_window:
+            recent = successes[-self.success_window :]
+            required_successes = int(self.success_window * self.success_threshold_pct)
+            if sum(recent) < required_successes:
                 return False
 
         return True
@@ -114,8 +199,8 @@ class SuccessTrackingCallback(BaseCallback):
                 continue
 
             # Formato appiattito (VecEnv after PettingZoo conversion): singolo agent_info.
-            if 'distance_to_target' in env_info:
-                agent = str(env_info.get('agent', 'agent_0'))
+            if "distance_to_target" in env_info:
+                agent = str(env_info.get("agent", "agent_0"))
                 self._consume_agent_info(agent, env_info)
                 continue
 
@@ -123,17 +208,21 @@ class SuccessTrackingCallback(BaseCallback):
             for agent, agent_info in env_info.items():
                 if not isinstance(agent_info, dict):
                     continue
-                if 'distance_to_target' not in agent_info:
+                if "distance_to_target" not in agent_info:
                     continue
                 self._consume_agent_info(str(agent), agent_info)
 
         if self.stop_on_perfect_window and self._has_perfect_recent_window():
             self.goal_reached = True
             if self.verbose:
-                agents = self.expected_agents if self.expected_agents is not None else sorted(self.episode_successes.keys())
+                agents = (
+                    self.expected_agents
+                    if self.expected_agents is not None
+                    else sorted(self.episode_successes.keys())
+                )
                 print("\n" + "=" * 70)
                 print(
-                    f"TARGET REACHED: ultimi {self.success_window} episodi = 100% success "
+                    f"TARGET REACHED: ultimi {self.success_window} episodi >= {self.success_threshold_pct*100}% success "
                     f"per agenti {agents}. Training interrotto."
                 )
                 print("=" * 70 + "\n")
@@ -150,6 +239,10 @@ class SuccessTrackingCallback(BaseCallback):
             global_vmg = []
             global_speed = []
             global_success_rates = []
+            global_collision_penalty = []
+            global_near_collision_penalty = []
+            global_ttc_penalty = []
+            global_rounding_penalty = []
 
             for agent in sorted(self.episode_successes):
                 n_recent = len(self.episode_successes[agent])
@@ -158,7 +251,9 @@ class SuccessTrackingCallback(BaseCallback):
                     success_rate = (n_successes / n_recent) * 100
                     avg_dist = np.mean(self.episode_distances[agent])
                     print(f"{agent} - Last {n_recent} episodes:")
-                    print(f"   ✓ Successes: {n_successes}/{n_recent} ({success_rate:.1f}%)")
+                    print(
+                        f"   ✓ Successes: {n_successes}/{n_recent} ({success_rate:.1f}%)"
+                    )
                     print(f"   Avg final distance: {avg_dist:.1f} m")
                     global_success_rates.append(success_rate)
 
@@ -183,17 +278,69 @@ class SuccessTrackingCallback(BaseCallback):
                     speed_mean = float(np.mean(self.speed_window[agent]))
                     global_speed.append(speed_mean)
                     self.logger.record(f"speed/{agent}_mean_kts", speed_mean)
+                if self.collision_penalty_window[agent]:
+                    col_mean = float(np.mean(self.collision_penalty_window[agent]))
+                    global_collision_penalty.append(col_mean)
+                    self.logger.record(f"collision/{agent}_penalty_mean", col_mean)
+                if self.near_collision_penalty_window[agent]:
+                    near_mean = float(np.mean(self.near_collision_penalty_window[agent]))
+                    global_near_collision_penalty.append(near_mean)
+                    self.logger.record(f"collision/{agent}_near_penalty_mean", near_mean)
+                if self.ttc_penalty_window[agent]:
+                    ttc_mean = float(np.mean(self.ttc_penalty_window[agent]))
+                    global_ttc_penalty.append(ttc_mean)
+                    self.logger.record(f"collision/{agent}_ttc_penalty_mean", ttc_mean)
+                if self.rounding_penalty_window[agent]:
+                    rounding_mean = float(np.mean(self.rounding_penalty_window[agent]))
+                    global_rounding_penalty.append(rounding_mean)
+                    self.logger.record(f"rounding/{agent}_penalty_mean", rounding_mean)
+
+                if self.termination_reason_counts[agent]:
+                    total_terms = max(
+                        1, sum(self.termination_reason_counts[agent].values())
+                    )
+                    for reason, count in self.termination_reason_counts[agent].items():
+                        ratio = float(count) / float(total_terms)
+                        self.logger.record(f"termination/{agent}_{reason}_ratio", ratio)
 
             if global_trim_eff:
-                self.logger.record("trim/global_efficiency_mean", float(np.mean(global_trim_eff)))
+                self.logger.record(
+                    "trim/global_efficiency_mean", float(np.mean(global_trim_eff))
+                )
             if global_trim_error:
-                self.logger.record("trim/global_error_mean", float(np.mean(global_trim_error)))
+                self.logger.record(
+                    "trim/global_error_mean", float(np.mean(global_trim_error))
+                )
             if global_vmg:
                 self.logger.record("vmg/global_mean_kts", float(np.mean(global_vmg)))
             if global_speed:
-                self.logger.record("speed/global_mean_kts", float(np.mean(global_speed)))
+                self.logger.record(
+                    "speed/global_mean_kts", float(np.mean(global_speed))
+                )
             if global_success_rates:
-                self.logger.record("success/global_rate", float(np.mean(global_success_rates)))
+                self.logger.record(
+                    "success/global_rate", float(np.mean(global_success_rates))
+                )
+            if global_collision_penalty:
+                self.logger.record(
+                    "collision/global_penalty_mean",
+                    float(np.mean(global_collision_penalty)),
+                )
+            if global_near_collision_penalty:
+                self.logger.record(
+                    "collision/global_near_penalty_mean",
+                    float(np.mean(global_near_collision_penalty)),
+                )
+            if global_ttc_penalty:
+                self.logger.record(
+                    "collision/global_ttc_penalty_mean",
+                    float(np.mean(global_ttc_penalty)),
+                )
+            if global_rounding_penalty:
+                self.logger.record(
+                    "rounding/global_penalty_mean",
+                    float(np.mean(global_rounding_penalty)),
+                )
 
             print(f"{'='*70}\n")
 
