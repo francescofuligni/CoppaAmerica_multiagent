@@ -39,14 +39,14 @@ class SailingRenderer:
         gate_right = self.env.course_center_x + self.env.gate_width / 2.0
         
         # Top Gate (Bolina)
-        self.ax.plot([gate_left, gate_right], [self.env.top_gate_y, self.env.top_gate_y], 'g--', alpha=0.3)
-        self.ax.plot(gate_left, self.env.top_gate_y, 'go', markersize=8, label='Gate Mark')
-        self.ax.plot(gate_right, self.env.top_gate_y, 'go', markersize=8)
+        self.ax.plot([gate_left, gate_right], [self.env.top_gate_y, self.env.top_gate_y], 'm--', alpha=0.3)
+        self.ax.plot(gate_left, self.env.top_gate_y, 'mo', markersize=4, label='Gate Mark')
+        self.ax.plot(gate_right, self.env.top_gate_y, 'mo', markersize=4)
         
         # Bottom Gate (Poppa)
         self.ax.plot([gate_left, gate_right], [self.env.bottom_gate_y, self.env.bottom_gate_y], 'g--', alpha=0.3)
-        self.ax.plot(gate_left, self.env.bottom_gate_y, 'bo', markersize=8)
-        self.ax.plot(gate_right, self.env.bottom_gate_y, 'bo', markersize=8)
+        self.ax.plot(gate_left, self.env.bottom_gate_y, 'go', markersize=4)
+        self.ax.plot(gate_right, self.env.bottom_gate_y, 'go', markersize=4)
 
         info_lines = []
         for idx, agent in enumerate(self.env.possible_agents):

@@ -843,8 +843,24 @@ class ImprovedSailingEnv(ParallelEnv):
 
             processed_agents.append(agent)
 
+        # --- Logica Sudden Death ---
+        # Se almeno un agente ha completato la gara, terminiamo tutti gli altri immediatamente.
+        winner_found = any(self.state[a].get('termination_reason') == 'finished_race' for a in actions if a in self.state)
+        
+        if winner_found:
+            for a in actions:
+                if a in self.state and self.state[a].get('termination_reason') != 'finished_race':
+                    # L'agente ha perso perché l'altro ha finito prima
+                    rewards[a] = rewards.get(a, 0.0) - 1000.0
+                    terminations[a] = True
+                    self.state[a]['termination_reason'] = 'lost_race'
+                    # Aggiorna info per riflettere la sconfitta improvvisa
+                    if a in infos:
+                        infos[a]['termination_reason'] = 'lost_race'
+                        infos[a]['terminated'] = True
+
         # rimuovi agenti terminati dalla lista attiva
-        self.agents = [a for a in self.agents if not (terminations[a] or truncations[a])]
+        self.agents = [a for a in self.agents if not (terminations.get(a, False) or truncations.get(a, False))]
 
         return observations, rewards, terminations, truncations, infos
 
