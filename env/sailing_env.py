@@ -134,6 +134,9 @@ class ImprovedSailingEnv(ParallelEnv):
             base_dir = float(options['wind_direction'])
         else:
             base_dir = 1.5 * np.pi
+            # Aggiunta variabilità vento (-15 a +15 gradi)
+            offset = self.np_random.uniform(-np.radians(15), np.radians(15))
+            base_dir += offset
         self.wind_field.reset(self.np_random, base_direction=base_dir)
 
         # Ora posizioniamo barca e primo target (Bottom Gate per Leg 0)
