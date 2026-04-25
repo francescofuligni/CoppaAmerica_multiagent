@@ -4,41 +4,27 @@ import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 
 
-class CleanCheckpointCallback(CheckpointCallback):
+class RollingCheckpointCallback(BaseCallback):
     """
-    Estensione di CheckpointCallback che mantiene solo gli ultimi N checkpoint,
-    eliminando automaticamente quelli più vecchi per risparmiare spazio su disco.
+    Callback che salva il modello sovrascrivendo sempre lo stesso file,
+    invece di creare file incrementali.
     """
 
-    def __init__(
-        self,
-        save_freq: int,
-        save_path: str,
-        name_prefix: str = "rl_model",
-        keep_last: int = 3,
-        verbose: int = 0,
-    ):
-        super().__init__(save_freq, save_path, name_prefix, verbose=verbose)
-        self.keep_last = keep_last
+    def __init__(self, save_freq: int, save_path: str, verbose: int = 0):
+        super().__init__(verbose)
+        self.save_freq = save_freq
+        self.save_path = save_path
+
+    def _init_callback(self) -> None:
+        if self.save_path is not None:
+            os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
 
     def _on_step(self) -> bool:
-        result = super()._on_step()
         if self.n_calls % self.save_freq == 0:
-            search_pattern = os.path.join(
-                self.save_path, f"{self.name_prefix}_*steps.zip"
-            )
-            list_of_files = glob.glob(search_pattern)
-            list_of_files.sort(key=os.path.getmtime)
-
-            if len(list_of_files) > self.keep_last:
-                for file_path in list_of_files[: -self.keep_last]:
-                    try:
-                        os.remove(file_path)
-                        if self.verbose > 0:
-                            print(f"[Cleanup] Rimosso vecchio checkpoint: {file_path}")
-                    except OSError:
-                        pass
-        return result
+            if self.verbose > 0:
+                print(f"\n[RollingCheckpoint] Salvataggio del modello in {self.save_path}")
+            self.model.save(self.save_path)
+        return True
 
 
 class SuccessTrackingCallback(BaseCallback):
