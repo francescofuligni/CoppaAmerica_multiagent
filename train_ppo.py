@@ -7,7 +7,7 @@ import yaml
 
 # Importazioni Locali
 from env.sailing_env import ImprovedSailingEnv
-from callbacks import SuccessTrackingCallback, CleanCheckpointCallback
+from callbacks import SuccessTrackingCallback, RollingCheckpointCallback
 
 
 def train_model(
@@ -124,11 +124,9 @@ def train_model(
         stop_on_perfect_window=True,
     )
 
-    checkpoint_callback = CleanCheckpointCallback(
+    checkpoint_callback = RollingCheckpointCallback(
         save_freq=250000 // n_envs,
-        save_path="./models/checkpoints/",
-        name_prefix="sailing_model_ckpt",
-        keep_last=3,  # Mantiene solo gli ultimi 3 salvataggi
+        save_path=model_path + ".zip",
         verbose=1,
     )
 
@@ -164,16 +162,17 @@ def train_model(
         print(
             "\n\n[Training] Interrotto manualmente dall'utente (Ctrl+C). Procedo al salvataggio finale del modello..."
         )
+    finally:
+        if success_callback.goal_reached:
+            print("[Training] Stopped automatically after reaching success threshold.")
+        else:
+            print(
+                "[Training] Training ended (either manually interrupted, crashed, or max_chunks reached)."
+            )
 
-    if success_callback.goal_reached:
-        print("[Training] Stopped automatically after reaching success threshold.")
-    else:
-        print(
-            "[Training] Training ended (either manually interrupted or max_chunks reached)."
-        )
-
-    # 5. Salvataggio Modello
-    model.save(model_path)
-    print(f"\n Model saved as '{model_path}'")
+        # 5. Salvataggio Modello Sicuro
+        print("\n[Salvataggio Sicuro] Salvataggio del modello in corso...")
+        model.save(model_path)
+        print(f"Model saved successfully as '{model_path}'")
 
     return model

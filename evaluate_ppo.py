@@ -83,8 +83,8 @@ def create_video(
         
         step += 1
 
-        # Interrompi non appena una barca vince o l'episodio finisce (fallimento o timeout)
-        if any(terminations.values()) or any(truncations.values()):
+        # Interrompi solo quando TUTTE le barche hanno finito (o sono state rimosse per timeout/fallimento)
+        if all(terminations[a] or truncations[a] for a in terminations):
             break
 
     # Salva il video

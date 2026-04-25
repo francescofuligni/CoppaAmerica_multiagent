@@ -22,7 +22,7 @@ class ImprovedSailingEnv(ParallelEnv):
     """
     metadata = {'render_modes': ['rgb_array'], "name": "sailing_v0"}
 
-    def __init__(self, field_width=1482.0, field_length=4075.0, render_mode=None):
+    def __init__(self, field_width=1900.0, field_length=4100.0, render_mode=None):
         super().__init__()
         
         self.field_width = field_width
@@ -68,9 +68,7 @@ class ImprovedSailingEnv(ParallelEnv):
         self.ttc_penalty_scale = 5.0
         # Penalita' "infinita" pratica: valore molto alto ma stabile numericamente per PPO.
         self.hard_violation_penalty = 10_000.0
-        # Le regole hard partono dopo warmup per consentire apprendimento iniziale.
-        self.hard_rules_warmup_steps = 20_000
-        self.boundary_hard_after_steps = 15
+        # Le regole hard partono subito, l'ambiente è rigoroso.
         # Spin detection (giro completo + progresso scarso): comportamento irrealistico in regata.
         self.spin_window_len = 30
         self.spin_turn_threshold = np.radians(450.0)
@@ -90,11 +88,12 @@ class ImprovedSailingEnv(ParallelEnv):
         self.bottom_gate_y = 200.0
         self.gate_width = 300.0
 
-        # Obs: (x, y, speed, sin_h, cos_h, sin_aw, cos_aw, wind_speed, dist, sin_rb, cos_rb,
+        # Obs: (x, y, speed, sin_h, cos_h, sin_aw, cos_aw, wind_speed, 
+        #       dist_left, sin_rb_left, cos_rb_left, dist_right, sin_rb_right, cos_rb_right,
         #       rudder, sail_trim, is_foiling, active_foil, is_upwind_leg,
         #       rel_opp_x, rel_opp_y, opp_dist, speed_adv)
         self.observation_spaces = {agent: spaces.Box(
-            low=-1.0, high=1.0, shape=(20,), dtype=np.float32
+            low=-1.0, high=1.0, shape=(23,), dtype=np.float32
         ) for agent in self.possible_agents}
 
         self.action_spaces = {agent: spaces.Box(
@@ -128,12 +127,16 @@ class ImprovedSailingEnv(ParallelEnv):
             
         self.agents = self.possible_agents[:]
         self.step_count = 0
+        self.finished_boats = 0  # Contatore arrivi scaglionati
 
         # Inizializziamo il vento fisicamente da Nord a Sud (asse Y dall'alto verso il basso)
         if options and 'wind_direction' in options:
             base_dir = float(options['wind_direction'])
         else:
             base_dir = 1.5 * np.pi
+            # Aggiunta variabilità vento (-15 a +15 gradi)
+            offset = self.np_random.uniform(-np.radians(15), np.radians(15))
+            base_dir += offset
         self.wind_field.reset(self.np_random, base_direction=base_dir)
 
         # Ora posizioniamo barca e primo target (Bottom Gate per Leg 0)
@@ -216,7 +219,7 @@ class ImprovedSailingEnv(ParallelEnv):
         self.state[agent]['rounding_segment'] = segment
         self.state[agent]['rounding_side'] = float(side)
 
-    def _apply_rounding_control(self, agent: str, reward: float, terminated: bool, hard_rules_active: bool, gate_left: float, gate_right: float):
+    def _apply_rounding_control(self, agent: str, reward: float, terminated: bool, gate_left: float, gate_right: float):
         """Penalita' progressiva e retry per rounding non completato."""
         if terminated:
             return reward, terminated, 0.0
@@ -240,8 +243,8 @@ class ImprovedSailingEnv(ParallelEnv):
         retries = self.state[agent]['rounding_retries']
         reward -= self.rounding_retry_penalty * min(3, retries)
 
-        # Se insiste troppo e le hard rules sono attive: termina con violazione dedicata.
-        if hard_rules_active and retries >= self.rounding_max_retries:
+        # Se insiste troppo: termina con violazione dedicata.
+        if retries >= self.rounding_max_retries:
             reward -= self.hard_violation_penalty
             terminated = True
             self.state[agent]['termination_reason'] = 'failed_rounding'
@@ -260,17 +263,28 @@ class ImprovedSailingEnv(ParallelEnv):
 
     def _get_obs(self, agent):
         pos = np.array([self.state[agent]['x'], self.state[agent]['y']])
-        dist_to_target = np.linalg.norm(pos - self.target[agent])
-        bearing_to_target = np.arctan2(
-            self.target[agent][1] - pos[1], self.target[agent][0] - pos[0]
-        )
+        
+        # Calculate current gate marks
+        gate_left_x = self.course_center_x - self.gate_width / 2.0
+        gate_right_x = self.course_center_x + self.gate_width / 2.0
+        current_leg = self.state[agent]['current_leg']
+        gate_y = self.top_gate_y if current_leg in [1, 1.5] else self.bottom_gate_y
+            
+        left_mark = np.array([gate_left_x, gate_y])
+        right_mark = np.array([gate_right_x, gate_y])
+        
+        dist_left = np.linalg.norm(pos - left_mark)
+        bearing_left = np.arctan2(left_mark[1] - pos[1], left_mark[0] - pos[0])
+        dist_right = np.linalg.norm(pos - right_mark)
+        bearing_right = np.arctan2(right_mark[1] - pos[1], right_mark[0] - pos[0])
         
         local_wind_dir, local_wind_speed = self.wind_field.get_local_wind(
             self.state[agent]['x'], self.state[agent]['y']
         )
         
         heading = self.state[agent]['heading']
-        rel_bearing = bearing_to_target - heading
+        rel_bearing_left = bearing_left - heading
+        rel_bearing_right = bearing_right - heading
         # Angolo apparente del vento rispetto alla prua, simmetrico da -pi a +pi
         apparent_wind = (local_wind_dir + np.pi) - heading
         apparent_wind = self._normalize_angle(apparent_wind)
@@ -303,13 +317,15 @@ class ImprovedSailingEnv(ParallelEnv):
             np.sin(heading), np.cos(heading),                    # [-1, 1]
             np.sin(apparent_wind), np.cos(apparent_wind),        # [-1, 1]
             local_wind_speed / self.max_wind,                    # [0, 1]
-            dist_to_target / field_diag,                         # [0, 1]
-            np.sin(rel_bearing), np.cos(rel_bearing),            # [-1, 1]
+            dist_left / field_diag,                              # [0, 1]
+            np.sin(rel_bearing_left), np.cos(rel_bearing_left),  # [-1, 1]
+            dist_right / field_diag,                             # [0, 1]
+            np.sin(rel_bearing_right), np.cos(rel_bearing_right),# [-1, 1]
             float(self.state[agent]['rudder_angle']),             # [-1, 1]
             trim_level_to_action(self.state[agent]['sail_trim']), # [-1, 1]
             1.0 if self.state[agent]['is_foiling'] else 0.0,     # [0, 1] boolean foiling state
             self.state[agent]['active_foil'],                    # [-1, 1] Port vs Starboard foil
-            1.0 if self.state[agent]['current_leg'] == 1 else -1.0, # [-1, 1] Leg information
+            1.0 if self.state[agent]['current_leg'] in [1, 1.5] else -1.0, # [-1, 1] Leg information
             rel_opp_x,                                            # [-1, 1]
             rel_opp_y,                                            # [-1, 1]
             opp_dist_norm,                                        # [0, 1]
@@ -335,7 +351,6 @@ class ImprovedSailingEnv(ParallelEnv):
         collision_radius = self.collision_radius
         near_collision_radius = self.near_collision_radius
         max_correction_per_boat = self.max_collision_correction
-        hard_rules_active = self.step_count >= self.hard_rules_warmup_steps
 
         for agent, action in actions.items():
             # --- salta agenti già terminati ---
@@ -522,23 +537,56 @@ class ImprovedSailingEnv(ParallelEnv):
                         if other in infos:
                             infos[other]['row_violation_count'] = infos[other].get('row_violation_count', 0) + 1
 
+                # Accumula penalita' soft per agent (sempre, indipendentemente da hard/soft)
                 collision_penalty += penalty_curr
                 collision_count += 1
 
-                # Collisione hard solo se impatto severo e dopo warmup.
-                hard_collision = hard_rules_active and dist < (collision_radius * 0.6) and closing_speed > 6.0
+                # --- Collisione Hard: Diritto di Rotta (Right of Way) ---
+                # Collisione hard se impatto severo.
+                hard_collision = dist < (collision_radius * 0.6) and closing_speed > 6.0
                 if hard_collision:
-                    hard_violation = True
-                    hard_violation_reason = 'collision'
-
-                rewards.setdefault(other, 0.0)
-                rewards[other] -= penalty_other
-                if hard_collision:
-                    rewards[other] -= self.hard_violation_penalty
-                    terminations[other] = True
-                    truncations[other] = False
-                    if other in self.state:
-                        self.state[other]['termination_reason'] = 'collision'
+                    if opposite_tacks:
+                        # Su mure opposte: si applica la Regola 10 della vela.
+                        # La barca su mure a sinistra (Port) ha torto e viene terminata.
+                        # La barca su mure a dritta (Starboard) ha la precedenza e continua.
+                        if curr_is_port and not other_is_port:
+                            # agent e' su Port (ha torto), other e' su Starboard (ha ragione)
+                            hard_violation = True
+                            hard_violation_reason = 'collision_port_tack_violation'
+                            # other (Starboard) riceve solo penalita' lieve da contatto, non viene terminata
+                            rewards.setdefault(other, 0.0)
+                            rewards[other] -= 50.0
+                            if other in infos:
+                                infos[other]['termination_reason'] = None
+                        elif other_is_port and not curr_is_port:
+                            # other e' su Port (ha torto), agent e' su Starboard (ha ragione)
+                            rewards.setdefault(other, 0.0)
+                            rewards[other] -= self.hard_violation_penalty
+                            terminations[other] = True
+                            truncations[other] = False
+                            if other in self.state:
+                                self.state[other]['termination_reason'] = 'collision_port_tack_violation'
+                            if other in infos:
+                                infos[other]['termination_reason'] = 'collision_port_tack_violation'
+                            # agent (Starboard) riceve solo penalita' lieve da contatto
+                            # hard_violation rimane False: agent non viene terminato dal blocco hard_violation sottostante
+                            reward -= 50.0
+                    else:
+                        # Stesse mure: nessun diritto di rotta chiaro, distruzione reciproca
+                        hard_violation = True
+                        hard_violation_reason = 'collision'
+                        rewards.setdefault(other, 0.0)
+                        rewards[other] -= self.hard_violation_penalty
+                        terminations[other] = True
+                        truncations[other] = False
+                        if other in self.state:
+                            self.state[other]['termination_reason'] = 'collision'
+                        if other in infos:
+                            infos[other]['termination_reason'] = 'collision'
+                else:
+                    # Collisione soft (non-hard): applica solo le penalita' soft per other
+                    rewards.setdefault(other, 0.0)
+                    rewards[other] -= penalty_other
 
                 # Piccola separazione simmetrica per evitare interpenetrazione persistente.
                 overlap = collision_radius - dist
@@ -557,8 +605,6 @@ class ImprovedSailingEnv(ParallelEnv):
                 if other in infos:
                     infos[other]['collision_penalty'] = infos[other].get('collision_penalty', 0.0) + penalty_other
                     infos[other]['collision_count'] = infos[other].get('collision_count', 0) + 1
-                    if hard_collision:
-                        infos[other]['termination_reason'] = 'collision'
 
             # distanza dal target
             pos = np.array([self.state[agent]['x'], self.state[agent]['y']])
@@ -670,18 +716,7 @@ class ImprovedSailingEnv(ParallelEnv):
             bx = self.state[agent]['x']
             by = self.state[agent]['y']
             
-            # Superamento linee tratteggiate: soft in apprendimento, hard solo se persistente dopo warmup.
-            if bx < self.boundaries['x_min'] or bx > self.boundaries['x_max']:
-                self.state[agent]['boundary_outside_steps'] = self.state[agent].get('boundary_outside_steps', 0) + 1
-                reward -= 30.0
-                if hard_rules_active and self.state[agent]['boundary_outside_steps'] >= self.boundary_hard_after_steps:
-                    reward -= self.hard_violation_penalty
-                    terminated = True
-                    self.state[agent]['termination_reason'] = 'boundary_violation'
-            else:
-                self.state[agent]['boundary_outside_steps'] = 0
-                
-            # Fuori mappa totale: hard-fail.
+            # Superamento Confini: Istadeath immediato
             if bx < 0 or bx > self.field_width or by < 0 or by > self.field_length:
                 reward -= self.hard_violation_penalty
                 terminated = True
@@ -691,120 +726,170 @@ class ImprovedSailingEnv(ParallelEnv):
             gate_left = self.course_center_x - self.gate_width / 2.0
             gate_right = self.course_center_x + self.gate_width / 2.0
 
-            if self.state[agent]['current_leg'] == 0:
-                # Partenza: attraversamento verso l'alto del Bottom Gate
-                if prev_y < self.bottom_gate_y <= by:
-                    if gate_left <= bx <= gate_right:
-                        self.state[agent]['current_leg'] = 1
-                        reward += 400.0  # Bonus partenza
-                        mark_info = self.round_marks[agent]
-                        self.target[agent] = np.array([mark_info['x'], self.top_gate_y])
+            if not terminated:
+                current_leg = self.state[agent]['current_leg']
+                # Anti-Loop / Wrong Course System
+                wrong_course = False
+                if current_leg == 1 and by < self.bottom_gate_y - 150:
+                    wrong_course = True
+                elif current_leg == 1.5 and by < self.top_gate_y - 150:
+                    wrong_course = True
+                elif current_leg == 2 and by > self.top_gate_y + 150:
+                    wrong_course = True
+                elif current_leg == 3 and by > self.bottom_gate_y + 150:
+                    wrong_course = True
+
+                if wrong_course:
+                    reward -= self.hard_violation_penalty
+                    terminated = True
+                    self.state[agent]['termination_reason'] = 'wrong_course'
+
+            if not terminated:
+                if self.state[agent]['current_leg'] == 0:
+                    # Partenza: attraversamento verso l'alto del Bottom Gate
+                    if prev_y < self.bottom_gate_y <= by:
+                        if gate_left <= bx <= gate_right:
+                            self.state[agent]['current_leg'] = 1
+                            reward += 400.0  # Bonus partenza
+                            mark_info = self.round_marks[agent]
+                            self.target[agent] = np.array([mark_info['x'], self.top_gate_y])
+                            self.previous_distance[agent] = np.linalg.norm(pos - self.target[agent])
+                            self.best_distance[agent] = self.previous_distance[agent]
+                        else:
+                            reward -= self.hard_violation_penalty
+                            terminated = True
+                            self.state[agent]['termination_reason'] = 'missed_start_gate'
+
+                elif self.state[agent]['current_leg'] == 1:
+                    # Upwind: deve tagliare il Top Gate passando fra gate_left e gate_right.
+                    # Usa prev_y/by per rilevamento robusto anche su salti di frame.
+                    crossed_top_line = prev_y < self.top_gate_y <= by
+
+                    if crossed_top_line:
+                        if gate_left <= bx <= gate_right:
+                            # Fase 1 (Ingresso): Transizione a stato intermedio (Leg 1.5)
+                            self.state[agent]['current_leg'] = 1.5
+                            # Setta target esterno per guidare l'agente (Reward Trap Fix)
+                            dist_to_left_mark = abs(bx - gate_left)
+                            dist_to_right_mark = abs(bx - gate_right)
+                            if dist_to_left_mark <= dist_to_right_mark:
+                                self.target[agent] = np.array([gate_left - 60.0, self.top_gate_y + 40.0])
+                            else:
+                                self.target[agent] = np.array([gate_right + 60.0, self.top_gate_y + 40.0])
+                            
+                            self.previous_distance[agent] = np.linalg.norm(pos - self.target[agent])
+                            self.best_distance[agent] = self.previous_distance[agent]
+                        else:
+                            # Passaggio fuori gate: squalifica immediata
+                            reward -= self.hard_violation_penalty
+                            terminated = True
+                            self.state[agent]['termination_reason'] = 'missed_top_gate'
+
+                elif self.state[agent]['current_leg'] == 1.5:
+                    # Fase 2 (Validazione): raggiungere checkpoint esterno
+                    valid_y = by >= self.top_gate_y + 40.0
+                    valid_x = bx < gate_left or bx > gate_right
+                    
+                    if valid_y and valid_x:
+                        # Rounding validato: transizione a Leg 2 e assegnazione macro-reward
+                        self.state[agent]['current_leg'] = 2
+                        reward += 500.0  # Super Bonus per aver girato la boa di bolina
+                        
+                        # Prepara discesa
+                        round_side = -1.0 if bx < gate_left else 1.0
+                        self._start_rounding_segment(agent, segment='top_to_bottom', side=round_side)
+                        self._set_rounding_target(agent, gate_left, gate_right, self.top_gate_y, round_side, down_offset=-40.0)
                         self.previous_distance[agent] = np.linalg.norm(pos - self.target[agent])
                         self.best_distance[agent] = self.previous_distance[agent]
-                    elif hard_rules_active:
+
+                elif self.state[agent]['current_leg'] == 2:
+                    # Prima di puntare il gate di arrivo, obbliga un'uscita pulita dalla boa.
+                    if self.state[agent].get('post_round_pending', False):
+                        if dist_to_target <= max(self.target_radius * 1.2, 60.0):
+                            self.state[agent]['post_round_pending'] = False
+                            self.state[agent]['rounding_segment'] = None
+                            self.state[agent]['rounding_steps'] = 0
+                            self.state[agent]['rounding_retries'] = 0
+                            self.target[agent] = np.array([self.course_center_x, self.bottom_gate_y])
+                            self.previous_distance[agent] = np.linalg.norm(pos - self.target[agent])
+                            self.best_distance[agent] = self.previous_distance[agent]
+
+                    # Downwind: controllo robusto di attraversamento del Bottom Gate.
+                    if not self.state[agent].get('post_round_pending', False):
+                        crossed_bottom_line = prev_y > self.bottom_gate_y >= by
+                        if crossed_bottom_line:
+                            if gate_left <= bx <= gate_right:
+                                # Passaggio corretto: transizione a Leg 3
+                                self.state[agent]['current_leg'] = 3
+                                reward += 500.0  # Bonus per aver girato la boa di arrivo
+                                round_side = -1.0 if bx < self.course_center_x else 1.0
+                                self._start_rounding_segment(agent, segment='bottom_finish', side=round_side)
+                                self._set_rounding_target(agent, gate_left, gate_right, self.bottom_gate_y, round_side, down_offset=40.0)
+                                self.previous_distance[agent] = np.linalg.norm(pos - self.target[agent])
+                                self.best_distance[agent] = self.previous_distance[agent]
+                            else:
+                                # Passaggio fuori gate: squalifica immediata
+                                reward -= self.hard_violation_penalty
+                                terminated = True
+                                self.state[agent]['termination_reason'] = 'missed_bottom_gate'
+
+                elif self.state[agent]['current_leg'] == 3:
+                    # Leg finale: giro attorno boa di arrivo. Una volta raggiunto il target esterno, arrivo scaglionato.
+                    if self.state[agent].get('post_round_pending', False):
+                        if dist_to_target <= max(self.target_radius * 1.2, 60.0):
+                            self.finished_boats += 1
+                            efficiency = max(0, self.max_steps - self.step_count) / self.max_steps
+                            if self.finished_boats == 1:
+                                # Vincitore: reward piena
+                                reward += 2000.0 + efficiency * 1000.0
+                                self.state[agent]['termination_reason'] = 'finished_first'
+                            else:
+                                # Secondo classificato: reward ridotta
+                                reward += 200.0
+                                self.state[agent]['termination_reason'] = 'finished_second'
+                            terminated = True
+                            self.state[agent]['steps_to_target'] = self.step_count
+                            self.state[agent]['post_round_pending'] = False
+                            self.state[agent]['rounding_segment'] = None
+                            self.state[agent]['rounding_steps'] = 0
+                            self.state[agent]['rounding_retries'] = 0
+
+            if not terminated:
+                # Protezione rounding: penalita' crescente + retry + hard-fail dedicato.
+                reward, terminated, round_penalty = self._apply_rounding_control(
+                    agent=agent,
+                    reward=reward,
+                    terminated=terminated,
+                    gate_left=gate_left,
+                    gate_right=gate_right,
+                )
+
+            if not terminated:
+                if self.step_count >= self.max_steps:
+                    truncated = True
+                    self.state[agent]['termination_reason'] = 'timeout'
+                    progress = 1.0 - (self.best_distance[agent] / max(self.previous_distance[agent], 1.0))
+                    if progress > 0:
+                        reward += progress * 200.0
+
+                # Giro su se stessa + progresso scarso/negativo: hard-fail.
+                # ESCLUSIONE: non penalizzare durante Leg 3 (giro finale è voluto attorno boa di arrivo).
+                if self.state[agent]['current_leg'] != 3:
+                    turn_sum = float(np.sum(self.state[agent].get('spin_turn_window', [])))
+                    prog_sum = float(np.sum(self.state[agent].get('spin_progress_window', [])))
+                    if len(self.state[agent].get('spin_turn_window', [])) >= self.spin_window_len and turn_sum >= self.spin_turn_threshold and prog_sum <= self.spin_min_progress:
                         reward -= self.hard_violation_penalty
                         terminated = True
-                        self.state[agent]['termination_reason'] = 'missed_start_gate'
+                        self.state[agent]['termination_reason'] = 'spin_violation'
 
-            elif self.state[agent]['current_leg'] == 1:
-                # Upwind: deve tagliare in mezzo alle boe (Y >= top_gate_y) passando fra gate_left e gate_right.
-                mark_info = self.round_marks[agent]
-                mark_x = mark_info['x']
-                mark_side = mark_info['side']
-
-                crossed_top_line = prev_y < self.top_gate_y <= by
-                # Se supera la linea della boa senza passare nel gate e' hard-fail (dopo warmup).
-                if hard_rules_active and crossed_top_line and not (gate_left <= bx <= gate_right):
+                # Hard violation da collisione rilevata nel blocco pairwise.
+                if hard_violation:
                     reward -= self.hard_violation_penalty
                     terminated = True
-                    self.state[agent]['termination_reason'] = 'missed_top_gate'
-                
-                # Check del taglio corretto della linea fra le due boe:
-                if by >= self.top_gate_y and gate_left <= bx <= gate_right:
-                    self.state[agent]['current_leg'] = 2
-                    reward += 500.0  # Super Bonus per aver girato la boa di bolina
-                    round_side = -1.0 if bx < self.course_center_x else 1.0
-                    self._start_rounding_segment(agent, segment='top_to_bottom', side=round_side)
-                    # Ora imposta il target esterno alla boa per costringere a fare il giro attorno a essa
-                    self._set_rounding_target(agent, gate_left, gate_right, self.top_gate_y, round_side, down_offset=-40.0)
-
-                    self.previous_distance[agent] = np.linalg.norm(pos - self.target[agent])
-                    self.best_distance[agent] = self.previous_distance[agent]
-                    
-            elif self.state[agent]['current_leg'] == 2:
-                # Prima di puntare il gate di arrivo, obbliga un'uscita pulita dalla boa.
-                if self.state[agent].get('post_round_pending', False):
-                    if dist_to_target <= max(self.target_radius * 1.2, 60.0):
-                        self.state[agent]['post_round_pending'] = False
-                        self.state[agent]['rounding_segment'] = None
-                        self.state[agent]['rounding_steps'] = 0
-                        self.state[agent]['rounding_retries'] = 0
-                        self.target[agent] = np.array([self.course_center_x, self.bottom_gate_y])
-                        self.previous_distance[agent] = np.linalg.norm(pos - self.target[agent])
-                        self.best_distance[agent] = self.previous_distance[agent]
-
-                # Downwind: deve scendere sotto la Y del Bottom Gate, restando in mezzo alle boe X.
-                # Al passaggio del Bottom Gate, attiva Leg 3 (giro finale attorno boa).
-                if (not self.state[agent].get('post_round_pending', False)) and by <= self.bottom_gate_y and gate_left <= bx <= gate_right:
-                    self.state[agent]['current_leg'] = 3
-                    reward += 500.0  # Bonus per aver girato la boa di arrivo
-                    round_side = -1.0 if bx < self.course_center_x else 1.0
-                    self._start_rounding_segment(agent, segment='bottom_finish', side=round_side)
-                    # Imposta target esterno alla boa di arrivo per costringere il giro finale
-                    self._set_rounding_target(agent, gate_left, gate_right, self.bottom_gate_y, round_side, down_offset=40.0)
-                    
-                    self.previous_distance[agent] = np.linalg.norm(pos - self.target[agent])
-                    self.best_distance[agent] = self.previous_distance[agent]
-            
-            elif self.state[agent]['current_leg'] == 3:
-                # Leg finale: giro attorno boa di arrivo. Una volta raggiunto il target esterno, contrassegna la fine.
-                if self.state[agent].get('post_round_pending', False):
-                    if dist_to_target <= max(self.target_radius * 1.2, 60.0):
-                        efficiency = max(0, self.max_steps - self.step_count) / self.max_steps
-                        reward += 2000.0 + efficiency * 1000.0  # Vittoria finale della regata
-                        terminated = True
-                        self.state[agent]['steps_to_target'] = self.step_count
-                        self.state[agent]['termination_reason'] = 'finished_race'
-                        self.state[agent]['post_round_pending'] = False
-                        self.state[agent]['rounding_segment'] = None
-                        self.state[agent]['rounding_steps'] = 0
-                        self.state[agent]['rounding_retries'] = 0
-
-            # Protezione rounding: penalita' crescente + retry + hard-fail dedicato.
-            reward, terminated, round_penalty = self._apply_rounding_control(
-                agent=agent,
-                reward=reward,
-                terminated=terminated,
-                hard_rules_active=hard_rules_active,
-                gate_left=gate_left,
-                gate_right=gate_right,
-            )
-
-            if self.step_count >= self.max_steps:
-                truncated = True
-                self.state[agent]['termination_reason'] = 'timeout'
-                progress = 1.0 - (self.best_distance[agent] / max(self.previous_distance[agent], 1.0))
-                if progress > 0:
-                    reward += progress * 200.0
-
-            # Giro su se stessa + progresso scarso/negativo: hard-fail.
-            # ESCLUSIONE: non penalizzare durante Leg 3 (giro finale è voluto attorno boa di arrivo).
-            if hard_rules_active and not terminated and self.state[agent]['current_leg'] != 3:
-                turn_sum = float(np.sum(self.state[agent].get('spin_turn_window', [])))
-                prog_sum = float(np.sum(self.state[agent].get('spin_progress_window', [])))
-                if len(self.state[agent].get('spin_turn_window', [])) >= self.spin_window_len and turn_sum >= self.spin_turn_threshold and prog_sum <= self.spin_min_progress:
-                    reward -= self.hard_violation_penalty
-                    terminated = True
-                    self.state[agent]['termination_reason'] = 'spin_violation'
-
-            # Hard violation da collisione rilevata nel blocco pairwise.
-            if hard_violation and not terminated:
-                reward -= self.hard_violation_penalty
-                terminated = True
-                self.state[agent]['termination_reason'] = hard_violation_reason
+                    self.state[agent]['termination_reason'] = hard_violation_reason
 
             termination_reason = self.state[agent].get('termination_reason', None)
-            finished_race = termination_reason == 'finished_race'
+            finished_race = termination_reason in ('finished_first', 'finished_second')
 
             # aggiorna dizionari
             observations[agent] = self._get_obs(agent)
@@ -844,7 +929,7 @@ class ImprovedSailingEnv(ParallelEnv):
             processed_agents.append(agent)
 
         # rimuovi agenti terminati dalla lista attiva
-        self.agents = [a for a in self.agents if not (terminations[a] or truncations[a])]
+        self.agents = [a for a in self.agents if not (terminations.get(a, False) or truncations.get(a, False))]
 
         return observations, rewards, terminations, truncations, infos
 
