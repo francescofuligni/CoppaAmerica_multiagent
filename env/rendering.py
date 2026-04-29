@@ -21,6 +21,45 @@ class SailingRenderer:
         self.ax.set_aspect('equal')
         self.ax.grid(True, alpha=0.3)
         self.ax.set_facecolor('#a0d8ef')
+        
+        # --- PRESTART LINE (coerente con env) ---
+        start_y = self.env.start_line_y
+
+        # linea di partenza reale
+        self.ax.axhline(
+            start_y,
+            color='yellow',
+            linewidth=2,
+            linestyle='--',
+            alpha=0.8,
+            label='Start Line'
+        )
+
+        # zona prestart (timer phase)
+        if self.env.start_phase:
+            # area sotto la linea dove le barche si preparano
+            staging_height = 120.0  # coerente con tuo spawn (-20 / -80)
+
+            pre_zone = patches.Rectangle(
+                (0, start_y - staging_height),
+                self.env.field_width,
+                staging_height,
+                linewidth=0,
+                facecolor='yellow',
+                alpha=0.08
+            )
+            self.ax.add_patch(pre_zone)
+
+            self.ax.text(
+                self.env.course_center_x,
+                start_y - 60,
+                "PRESTART PHASE",
+                color='yellow',
+                fontsize=9,
+                fontweight='bold',
+                ha='center',
+                alpha=0.9
+            )
 
         # --- Frecce vento ---
         xs, ys, us, vs = self.env.wind_field.get_grid_arrows(n_arrows=8)

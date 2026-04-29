@@ -110,6 +110,20 @@ class ImprovedSailingEnv(ParallelEnv):
         self.round_marks = {}
         self.renderer = SailingRenderer(self)
 
+        # --- PRESTART PHASE (staging verso linea) ---
+
+        self.start_timer = 40
+        self.start_line_y = self.bottom_gate_y - 50.0        
+        self.start_phase = True
+        self.start_armed = False
+        self.ocs_penalty = 200.0
+
+        # reward shaping
+
+        self.prestart_line_bonus = 2.5
+        self.prestart_final_bonus = 10.0
+        self.prestart_distance_scale = 0.002
+
     def observation_space(self, agent):
         return self.observation_spaces[agent]
 
@@ -118,51 +132,78 @@ class ImprovedSailingEnv(ParallelEnv):
 
     def _normalize_angle(self, angle):
         return angle % (2 * np.pi)
+    
+    
 
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
         if seed is not None:
             self.np_random, seed = gym.utils.seeding.np_random(seed)
         elif not hasattr(self, 'np_random'):
             self.np_random, _ = gym.utils.seeding.np_random()
-            
+
         self.agents = self.possible_agents[:]
         self.step_count = 0
-        self.finished_boats = 0  # Contatore arrivi scaglionati
+        self.finished_boats = 0
+        self.start_phase = True
+        self.start_armed = False
+        self.start_timer = 40
 
-        # Inizializziamo il vento fisicamente da Nord a Sud (asse Y dall'alto verso il basso)
+        # Wind initialization
         if options and 'wind_direction' in options:
             base_dir = float(options['wind_direction'])
         else:
             base_dir = 1.5 * np.pi
-            # Aggiunta variabilità vento (-15 a +15 gradi)
             offset = self.np_random.uniform(-np.radians(15), np.radians(15))
             base_dir += offset
+
         self.wind_field.reset(self.np_random, base_direction=base_dir)
 
-        # Ora posizioniamo barca e primo target (Bottom Gate per Leg 0)
+        # =========================
+        # PRESTART BOX DEFINITION
+        # =========================
+        
+
+        # Gate reference (ancora utile per target iniziale)
         gate_left_x = self.course_center_x - self.gate_width / 2.0
         gate_right_x = self.course_center_x + self.gate_width / 2.0
-        start_y = self.bottom_gate_y - 80.0  # Sotto la linea di partenza
 
-        # Assegnazione casuale: chi va a sinistra e chi a destra del gate di partenza
-        sides = [gate_left_x, gate_right_x]
-        if self.np_random.random() < 0.5:
-            sides = sides[::-1]
+        # =========================
+        # SPAWN AGENTS
+        # =========================
+        margin = 60.0
+        min_gap = 120.0
 
-        for i, agent in enumerate(self.possible_agents):
-            start_x = sides[i]
-            
+        shared_start_y = self.np_random.uniform(
+            self.start_line_y - 100.0,
+            self.start_line_y - 20.0
+        )
+
+        xs = []
+        for agent in self.possible_agents:
+            # per evitare che siano sovrapposte
+            while True:
+                start_x = self.np_random.uniform(
+                    margin,
+                    self.field_width - margin
+                )
+
+                if all(abs(start_x - x) > min_gap for x in xs):
+                    xs.append(start_x)
+                    break
+
+            start_y = shared_start_y   
+
             self.state[agent] = {
                 'x': start_x,
                 'y': start_y,
                 'speed': 0.0,
-                'heading': 0.0, # Verrà sovrascritto
+                'heading': 0.0,
                 'rudder_angle': 0.0,
                 'sail_trim': self.default_trim_level,
                 'is_foiling': False,
                 'active_foil': 1.0,
                 'dropped_foil_penalty_applied': False,
-                'current_leg': 0, # 0: Partenza, 1: Bolina, 2: Poppa, 3: Giro finale
+                'current_leg': 0,
                 'post_round_pending': False,
                 'spin_turn_window': [],
                 'spin_progress_window': [],
@@ -171,37 +212,46 @@ class ImprovedSailingEnv(ParallelEnv):
                 'rounding_retries': 0,
                 'rounding_segment': None,
                 'rounding_side': 0,
-                'max_y_reached': start_y, # Per monitorare progresso
+                'max_y_reached': start_y,
             }
 
-            # Ogni barca deve girare realmente una boa (sinistra/destra) e non solo tagliare la linea gate.
+            # rounding setup
             rounding_side = float(self.np_random.choice([-1, 1]))
             round_mark_x = self.course_center_x + rounding_side * (self.gate_width / 2.0)
             self.round_marks[agent] = {'side': rounding_side, 'x': round_mark_x}
-            
-            # Bersaglio Iniziale: centro del gate di partenza (Leg 0).
+
+            # target iniziale
             self.target[agent] = np.array([self.course_center_x, self.bottom_gate_y])
-            
-            self.trajectory[agent] = [np.array([self.state[agent]['x'], self.state[agent]['y']])]
-            pos = np.array([self.state[agent]['x'], self.state[agent]['y']])
+
+            self.trajectory[agent] = [np.array([start_x, start_y])]
+
+            pos = np.array([start_x, start_y])
             self.previous_distance[agent] = np.linalg.norm(pos - self.target[agent])
             self.best_distance[agent] = self.previous_distance[agent]
-        # Inizializza heading puntando verso il gate (Nord)
+
+        # =========================
+        # HEADING INITIALIZATION
+        # =========================
         for agent in self.possible_agents:
-            start_heading = np.pi / 2.0  # Puntando a Nord
+
+            start_heading = np.pi / 2.0
             start_heading += self.np_random.uniform(-np.radians(10), np.radians(10))
+
             self.state[agent]['heading'] = self._normalize_angle(start_heading)
 
             local_wind_dir, _ = self.wind_field.get_local_wind(
-                self.state[agent]['x'], self.state[agent]['y']
+                self.state[agent]['x'],
+                self.state[agent]['y']
             )
+
             twa = (local_wind_dir + np.pi) - self.state[agent]['heading']
             twa_deg = normalize_twa_deg(twa)
+
             self.state[agent]['sail_trim'] = optimal_trim_for_twa(twa_deg, False)
 
         observations = {a: self._get_obs(a) for a in self.agents}
         infos = {a: {} for a in self.agents}
-        
+
         return observations, infos
 
     def _set_rounding_target(self, agent: str, gate_left: float, gate_right: float, gate_y: float, side: float, down_offset: float):
@@ -458,7 +508,6 @@ class ImprovedSailingEnv(ParallelEnv):
             self.state[agent]['y'] += displacement * np.sin(self.state[agent]['heading'])
 
             self.trajectory[agent].append(np.array([self.state[agent]['x'], self.state[agent]['y']]))
-
             # Collision handling (single pass): confronta l'agente corrente con quelli gia' processati.
             # In questo modo evitiamo doppio conteggio e manteniamo la penalita' additiva sul reward finale.
             collision_penalty = 0.0
@@ -615,6 +664,38 @@ class ImprovedSailingEnv(ParallelEnv):
             truncated = False
             # Reset terminal marker each step while agent is alive.
             self.state[agent]['termination_reason'] = None
+            # =========================
+            # START TIMER PHASE
+            # =========================
+            if self.start_phase:
+
+                timer_ratio = self.step_count / self.start_timer
+                timer_ratio = min(timer_ratio, 1.0)
+
+                pos = np.array([self.state[agent]['x'], self.state[agent]['y']])
+                dist_to_line = abs(pos[1] - self.start_line_y)
+
+                # reward: stare vicino alla linea mentre il timer scorre
+                reward += (1.0 - dist_to_line / 200.0) * 3.0
+
+                # reward crescente verso fine timer
+                reward += timer_ratio * 2.0
+
+                # bonus per velocità (pre-start acceleration)
+                reward += self.state[agent]['speed'] * 0.1
+
+                # ARMING: dopo timer start si attiva la regata
+                if self.step_count >= self.start_timer:
+                    self.start_phase = False
+                    self.start_armed = True
+
+            if self.start_phase:
+                # OCS SOLO PRIMA DEL VIA
+                if self.state[agent]['y'] > self.start_line_y + 2.0:
+                    reward -= self.ocs_penalty
+                    terminated = True
+                    self.state[agent]['termination_reason'] = 'ocs'
+
             # 1. Progresso verso target e VMG (Velocity Made Good)
             distance_delta = prev_dist - dist_to_target
             spin_progress_window = self.state[agent].setdefault('spin_progress_window', [])
@@ -745,20 +826,19 @@ class ImprovedSailingEnv(ParallelEnv):
                     self.state[agent]['termination_reason'] = 'wrong_course'
 
             if not terminated:
-                if self.state[agent]['current_leg'] == 0:
-                    # Partenza: attraversamento verso l'alto del Bottom Gate
-                    if prev_y < self.bottom_gate_y <= by:
+                if self.start_armed and self.state[agent]['current_leg'] == 0:
+                    # start valido SOLO dopo timer
+                    if prev_y < self.start_line_y <= by:
                         if gate_left <= bx <= gate_right:
+
                             self.state[agent]['current_leg'] = 1
-                            reward += 400.0  # Bonus partenza
-                            mark_info = self.round_marks[agent]
-                            self.target[agent] = np.array([mark_info['x'], self.top_gate_y])
-                            self.previous_distance[agent] = np.linalg.norm(pos - self.target[agent])
-                            self.best_distance[agent] = self.previous_distance[agent]
-                        else:
-                            reward -= self.hard_violation_penalty
-                            terminated = True
-                            self.state[agent]['termination_reason'] = 'missed_start_gate'
+                            reward += 400.0  # start bonus più pulito
+
+                            # qualità start basata su distanza dalla linea al momento del via
+                            pos = np.array([self.state[agent]['x'], self.state[agent]['y']])
+                            dist = abs(pos[1] - self.start_line_y)
+
+                            reward += (1.0 - dist / 100.0) * 500.0
 
                 elif self.state[agent]['current_leg'] == 1:
                     # Upwind: deve tagliare il Top Gate passando fra gate_left e gate_right.
