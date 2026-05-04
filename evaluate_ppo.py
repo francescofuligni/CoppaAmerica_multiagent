@@ -14,11 +14,7 @@ def create_video(
     seed=None,
     wind_direction=None,
 ):
-    """
-    Genera video multi-agent mostrando per ogni barca:
-    - distanza dal target
-    - numero di step impiegati (se già arrivata)
-    """
+    """Genera video multi-agent mostrando distanza e step per ogni barca."""
     os.makedirs(os.path.dirname(filename), exist_ok=True)
 
     print("=" * 70)
@@ -36,7 +32,7 @@ def create_video(
 
     raw_env = ImprovedSailingEnv(render_mode="rgb_array")
 
-    # Patch per far passare seed e wind_direction al reset sottostante in VecEnv
+    # Workaround: VecEnv non espone direttamente seed e wind_direction al reset.
     orig_reset = raw_env.reset
 
     def custom_reset(*args, **kwargs):
@@ -79,7 +75,6 @@ def create_video(
         
         step += 1
 
-        # Interrompi solo quando le barche hanno finito (o sono state rimosse per timeout/fallimento)
         if all(terminations[a] or truncations[a] for a in terminations):
             break
 
@@ -99,17 +94,17 @@ def create_video(
 def create_multi_video(
     model_path="models/sailing_ppo_improved", output_dir="videos"
 ):
-    """Genera 5 video di test della regata con posizioni di partenza casuali."""
+    """Genera 5 video di test con posizioni di partenza casuali."""
 
     print("\n" + "=" * 70)
-    print("  TEST FINALE: 5 video di regata")
+    print("  FINAL TEST: 5 race videos")
     print("=" * 70)
 
     for i in range(1, 6):
         fname = os.path.join(output_dir, f"test_{i}.mp4")
-        print(f"\n--- Test {i}/5: Regata standard (Seed casuale) ---")
+        print(f"\n--- Test {i}/5: Standard race (Random Seed) ---")
         create_video(model_path=model_path, filename=fname, seed=None)
 
     print("\n" + "=" * 70)
-    print(f"  5 video salvati in {output_dir}/")
+    print(f"  5 videos saved in {output_dir}/")
     print("=" * 70)

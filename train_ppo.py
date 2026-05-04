@@ -16,10 +16,7 @@ def train_model(
     chunk_timesteps=None,
     max_chunks=None,
 ):
-    """
-    Funzione principale di training con supporto PARALLELISMO per PettingZoo tramite SuperSuit.
-    n_envs: Numero di ambienti da eseguire in parallelo.
-    """
+    """Avvia il training PPO parallelizzato tramite PettingZoo e SuperSuit."""
 
     try:
         with open("config.yaml", "r") as f:
@@ -35,17 +32,15 @@ def train_model(
     print(f"🛥️  SAILING RL - TRAINING (Parallel Envs: {n_envs})")
     print("=" * 70)
 
-    # Creazione Ambiente Vettorizzato
     print(f"1. Creating {n_envs} parallel environments (PettingZoo via SuperSuit)...")
 
     env = ImprovedSailingEnv()
     agents_per_env = len(env.possible_agents)
 
-    # Aggiungi black_death per permettere la rimozione di agenti in diversi step
+    # black_death supporta la rimozione asincrona degli agenti.
     env = ss.black_death_v3(env)
     env = ss.pettingzoo_env_to_vec_env_v1(env)
 
-    # Parallelizza l'ambiente
     env = ss.concat_vec_envs_v1(
         env, num_vec_envs=n_envs, num_cpus=0, base_class="stable_baselines3"
     )
@@ -59,7 +54,7 @@ def train_model(
 
     if os.path.exists(model_path + ".zip"):
         print(
-            f"\n2. Recuparato file esistente! Riprendo l'addestramento da '{model_path}.zip'..."
+            f"\n2. Existing model found! Resuming training from '{model_path}.zip'..."
         )
         model = PPO.load(
             model_path,
@@ -84,7 +79,7 @@ def train_model(
                     os.remove(file_path)
                 except OSError:
                     pass
-        print("   -> Piazza pulita dei vecchi checkpoint completata.")
+        print("   -> Cleaned old checkpoints.")
 
         net_arch = train_cfg.get("net_arch", [256, 256])
         model = PPO(
@@ -104,7 +99,6 @@ def train_model(
             tensorboard_log="./sailing_tensorboard/",
         )
 
-    # Setup Callback
     callback_check_freq = max(1, 10000 // max(1, n_envs * agents_per_env))
     success_callback = SuccessTrackingCallback(
         verbose=1,
@@ -124,7 +118,6 @@ def train_model(
 
     callback = CallbackList([success_callback, checkpoint_callback])
 
-    # Avvio Training
     print(f"\n4. Training for {total_timesteps} steps...")
     if chunk_timesteps is None:
         chunk_timesteps = max(total_timesteps, 200_000)
@@ -151,7 +144,7 @@ def train_model(
                 )
     except KeyboardInterrupt:
         print(
-            "\n\n[Training] Interrotto manualmente dall'utente (Ctrl+C). Procedo al salvataggio finale del modello..."
+            "\n\n[Training] Manually interrupted by user (Ctrl+C). Saving final model..."
         )
     finally:
         if success_callback.goal_reached:
@@ -161,8 +154,7 @@ def train_model(
                 "[Training] Training ended (either manually interrupted, crashed, or max_chunks reached)."
             )
 
-        # Salvataggio Modello
-        print("\n[Salvataggio] Salvataggio del modello in corso...")
+        print("\n[Saving] Saving model...")
         model.save(model_path)
         print(f"Model saved successfully as '{model_path}'")
 

@@ -22,7 +22,6 @@ class SailingRenderer:
         self.ax.grid(True, alpha=0.3)
         self.ax.set_facecolor('#a0d8ef')
 
-        # --- Frecce vento ---
         xs, ys, us, vs = self.env.wind_field.get_grid_arrows(n_arrows=8)
         speeds = np.sqrt(us**2 + vs**2)
         self.ax.quiver(xs, ys, us, vs, speeds, cmap='Blues', alpha=0.55,
@@ -30,20 +29,16 @@ class SailingRenderer:
 
         colors_map = {'red_boat': 'red', 'blue_boat': 'blue'}
         
-        # --- Disegna Boundaries (Confini) ---
-        self.ax.plot([self.env.boundaries['x_min'], self.env.boundaries['x_min']], [0, self.env.field_length], 'r--', linewidth=2, alpha=0.5, label='Boundary')
+        self.ax.plot([self.env.boundaries['x_min'], self.env.boundaries['x_min']], [0, self.env.field_length], 'r--', linewidth=2, alpha=0.5, label='Confine')
         self.ax.plot([self.env.boundaries['x_max'], self.env.boundaries['x_max']], [0, self.env.field_length], 'r--', linewidth=2, alpha=0.5)
 
-        # --- Disegna Gates (Cancelli) ---
         gate_left = self.env.course_center_x - self.env.gate_width / 2.0
         gate_right = self.env.course_center_x + self.env.gate_width / 2.0
         
-        # Top Gate (Bolina)
         self.ax.plot([gate_left, gate_right], [self.env.top_gate_y, self.env.top_gate_y], 'm--', alpha=0.3)
-        self.ax.plot(gate_left, self.env.top_gate_y, 'mo', markersize=4, label='Gate Mark')
+        self.ax.plot(gate_left, self.env.top_gate_y, 'mo', markersize=4, label='Boa Cancello')
         self.ax.plot(gate_right, self.env.top_gate_y, 'mo', markersize=4)
         
-        # Bottom Gate (Poppa)
         self.ax.plot([gate_left, gate_right], [self.env.bottom_gate_y, self.env.bottom_gate_y], 'g--', alpha=0.3)
         self.ax.plot(gate_left, self.env.bottom_gate_y, 'go', markersize=4)
         self.ax.plot(gate_right, self.env.bottom_gate_y, 'go', markersize=4)
@@ -52,13 +47,11 @@ class SailingRenderer:
         for idx, agent in enumerate(self.env.possible_agents):
             agent_color = colors_map.get(agent, 'black')
             
-            # Traiettoria
             if agent in self.env.trajectory and len(self.env.trajectory[agent]) > 1:
                 traj = np.array(self.env.trajectory[agent])
                 self.ax.plot(traj[:,0], traj[:,1], '-', color=agent_color,
                             alpha=0.5, linewidth=2)
 
-            # Barca
             if agent in self.env.state:
                 bx, by = self.env.state[agent]['x'], self.env.state[agent]['y']
                 hdg = self.env.state[agent]['heading']
@@ -69,7 +62,6 @@ class SailingRenderer:
                                 [np.sin(hdg),  np.cos(hdg)]])
                 boat_points = boat_points @ rot.T + np.array([bx, by])
                 
-                # Highlight in foil
                 boat_color = 'cyan' if self.env.state[agent].get('is_foiling', False) else agent_color
                 boat_edge = agent_color if self.env.state[agent].get('is_foiling', False) else 'darkgray'
                 boat = patches.Polygon(boat_points, closed=True,
@@ -98,12 +90,10 @@ class SailingRenderer:
                 self.ax.add_patch(near_circle)
                 self.ax.add_patch(coll_circle)
                 
-                # Active foil text indication
-                foil_side = "Port" if self.env.state[agent].get('active_foil', 1.0) == 1.0 else "Stbd"
-                foil_str = f"FOILING ({foil_side})" if self.env.state[agent].get('is_foiling', False) else f"HULL ({foil_side})"
+                foil_side = "Sinistra" if self.env.state[agent].get('active_foil', 1.0) == 1.0 else "Dritta"
+                foil_str = f"IN VOLO ({foil_side})" if self.env.state[agent].get('is_foiling', False) else f"SCAFO ({foil_side})"
                 self.ax.text(bx, by - 25, foil_str, fontsize=8, color='magenta', fontweight='bold', ha='center')
                 
-                # Distanza e step infos
                 dist = np.linalg.norm(np.array([bx, by]) - self.env.target[agent])
                 steps = self.env.state[agent].get('steps_to_target', self.env.step_count)
                 info_lines.append(f"{agent}: {dist:.0f}m ({steps}stp)")
@@ -120,12 +110,10 @@ class SailingRenderer:
                     f"Trim:{trim_percent:02d}%",
                     fontsize=7, color='navy', fontweight='bold')
         
-        # Info UI
         ref_agent = self.env.possible_agents[0]
         if ref_agent in self.env.state:
             dist = np.linalg.norm(np.array([self.env.state[ref_agent]['x'], self.env.state[ref_agent]['y']]) - self.env.target[ref_agent])
 
-            # Vento locale
             local_wd, local_ws = self.env.wind_field.get_local_wind(
                 self.env.state[ref_agent]['x'], self.env.state[ref_agent]['y']
             )
@@ -138,7 +126,7 @@ class SailingRenderer:
             if finished_agents:
                 winner_agent = min(finished_agents, key=finished_agents.get)
                 winner_steps = finished_agents[winner_agent]
-                winner_text = f"WIN: {winner_agent} | "
+                winner_text = f"VINCE: {winner_agent} | "
                 
             full_title = winner_text + " | ".join(info_lines)
             
@@ -151,12 +139,11 @@ class SailingRenderer:
                 fontsize=10, weight='bold'
             )
 
-            # --- Box info vento (centrato a sinistra) ---
             wind_text = (
-                f"Wind (base)\n"
+                f"Vento (base)\n"
                 f"Dir: {(90 - np.degrees(self.env.wind_field.base_direction)) % 360:.0f}\u00b0\n"
                 f"Speed: {self.env.wind_field.base_speed:.1f} kts\n"
-                f"\nWind (local @ boat)\n"
+                f"\nVento (locale @ barca)\n"
                 f"Dir: {wind_deg:.0f}°\n"
                 f"Speed: {local_ws:.1f} kts"
             )
@@ -167,14 +154,13 @@ class SailingRenderer:
                 family='monospace'
             )
 
-            # --- Rosa dei venti (centrata a destra) ---
             inset_ax = self.fig.add_axes([0.74, 0.42, 0.16, 0.16], polar=True)
             inset_ax.set_theta_zero_location('N')
             inset_ax.set_theta_direction(-1)
             inset_ax.set_rticks([])
             inset_ax.set_xticks(np.linspace(0, 2 * np.pi, 8, endpoint=False))
             inset_ax.set_xticklabels(['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'], fontsize=6)
-            inset_ax.set_title('Wind', fontsize=7, pad=2)
+            inset_ax.set_title('Vento', fontsize=7, pad=2)
             
             compass_base = np.pi / 2 - self.env.wind_field.base_direction
             compass_local = np.pi / 2 - local_wd
@@ -190,7 +176,7 @@ class SailingRenderer:
         
         self.fig.canvas.draw()
         try:
-            # Need copy=True so the array doesn't reference the mutable buffer
+            # Necessario copy=True affinché l'array non referenzi il buffer mutabile
             image = np.array(self.fig.canvas.buffer_rgba(), copy=True)[:, :, :3]
         except AttributeError:
              image = np.frombuffer(self.fig.canvas.tostring_rgb(), dtype=np.uint8)

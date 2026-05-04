@@ -5,10 +5,7 @@ from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 
 
 class RollingCheckpointCallback(BaseCallback):
-    """
-    Callback che salva il modello sovrascrivendo sempre lo stesso file,
-    invece di creare file incrementali.
-    """
+    """Callback che salva il modello sovrascrivendo sempre lo stesso file."""
 
     def __init__(self, save_freq: int, save_path: str, verbose: int = 0):
         super().__init__(verbose)
@@ -22,16 +19,13 @@ class RollingCheckpointCallback(BaseCallback):
     def _on_step(self) -> bool:
         if self.n_calls % self.save_freq == 0:
             if self.verbose > 0:
-                print(f"\n[RollingCheckpoint] Salvataggio del modello in {self.save_path}")
+                print(f"\n[RollingCheckpoint] Saving model to {self.save_path}")
             self.model.save(self.save_path)
         return True
 
 
 class SuccessTrackingCallback(BaseCallback):
-    """
-    Callback robusta per ambienti multi-agente e vettoriali (parallelizzati con VecEnv).
-    Tiene traccia di successi e distanze finali di ciascun agente.
-    """
+    """Tiene traccia di successi e distanze finali in ambienti multi-agente vettoriali."""
 
     def __init__(
         self,
@@ -60,7 +54,7 @@ class SuccessTrackingCallback(BaseCallback):
         self.episode_distances = {}  
         self.n_episodes = {}  
 
-        # Metriche continue 
+
         self.trim_eff_window = {}
         self.trim_error_window = {}
         self.vmg_window = {}
@@ -93,7 +87,7 @@ class SuccessTrackingCallback(BaseCallback):
             buffer.pop(0)
 
     def _consume_agent_info(self, agent: str, agent_info: dict) -> None:
-        """Consume metrics for one agent sample (supports both step and terminal records)."""
+        """Consuma le metriche per un campione dell'agente."""
         self._ensure_agent_buffers(agent)
 
         if "trim_efficiency" in agent_info:
@@ -148,7 +142,7 @@ class SuccessTrackingCallback(BaseCallback):
             self.termination_reason_counts[agent].get(reason, 0) + 1
         )
 
-        # Mantieni solo ultime N ep
+
         keep_n = max(100, self.success_window)
         if len(self.episode_successes[agent]) > keep_n:
             self.episode_successes[agent].pop(0)
@@ -202,8 +196,8 @@ class SuccessTrackingCallback(BaseCallback):
                 )
                 print("\n" + "=" * 70)
                 print(
-                    f"TARGET REACHED: ultimi {self.success_window} episodi >= {self.success_threshold_pct*100}% success "
-                    f"per agenti {agents}. Training interrotto."
+                    f"TARGET REACHED: last {self.success_window} episodes >= {self.success_threshold_pct*100}% success "
+                    f"for agents {agents}. Training stopped."
                 )
                 print("=" * 70 + "\n")
             return False

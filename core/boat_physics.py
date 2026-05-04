@@ -16,19 +16,7 @@ def compute_vmg_to_target(
     target_x: float,
     target_y: float,
 ) -> float:
-    """Calcola la Velocity Made Good (VMG) verso il target corrente.
-
-    Args:
-        boat_x: Coordinata X della barca.
-        boat_y: Coordinata Y della barca.
-        heading: Prua della barca in radianti.
-        speed: Velocità attuale in nodi.
-        target_x: Coordinata X del bersaglio.
-        target_y: Coordinata Y del bersaglio.
-
-    Returns:
-        Velocità in nodi proiettata lungo la direzione del bersaglio.
-    """
+    """Calcola la Velocity Made Good (VMG) verso il target corrente."""
     pos = np.array([boat_x, boat_y], dtype=np.float32)
     target_vec = np.array([target_x, target_y], dtype=np.float32) - pos
     
@@ -48,25 +36,15 @@ def compute_polar_speed(
     sail_trim: float,
     max_speed: float,
 ) -> tuple[float, float, float, float]:
-    """Calcola la velocità teorica della barca basata sulla polare.
-
-    Args:
-        apparent_wind_angle: Angolo del vento apparente (usato qui come TWA).
-        wind_speed: Velocità del vento locale in nodi.
-        is_foiling: Stato attuale di volo (True se in foiling).
-        sail_trim: Livello di regolazione delle vele [0, 1].
-        max_speed: Velocità massima consentita.
-
-    Returns:
-        Una tupla contenente:
-            - speed: Velocità calcolata in nodi.
-            - trim_eff: Efficienza del trim attuale [0, 1].
-            - optimal_trim: Trim ottimale per l'andatura corrente.
-            - angle_deg: Angolo del vento in gradi (normalizzato).
-    """
-    # NOTE: AWA is TWA
+    """Calcola la velocità teorica della barca basata sulla polare."""
+    # NOTA: AWA è considerato qui come TWA
     angle_deg = normalize_twa_deg(apparent_wind_angle)
         
+    # --- Curve Polari della Barca (Polar Curves) ---
+    # Le polari definiscono la velocità teorica massima di una barca a vela 
+    # dato un certo angolo del vento (TWA) e velocità del vento.
+    # Qui usiamo due set di curve distinte: una per quando la barca "vola" sui foil (altissima efficienza, 
+    # ma angoli morti più ampi) e una per quando è in galleggiamento "dislocante" (più lenta, ma stringe di più il vento).
     if is_foiling:
         if angle_deg < 45: speed_ratio = 0.0
         elif angle_deg < 55: speed_ratio = 1.0 + (angle_deg - 45) * 0.15

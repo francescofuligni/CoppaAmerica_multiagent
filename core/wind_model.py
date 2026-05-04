@@ -1,30 +1,10 @@
-"""Modello del campo di vento 2D con dinamiche temporali e spaziali.
-
-Il sistema implementa:
-    - Vento "base" globale che evolve lentamente tramite random walk.
-    - Griglia NxN di perturbazioni locali che evolvono in modo stocastico (mean-reverting).
-    - Interpolazione bilineare per determinare direzione e velocità in qualsiasi punto (x, y).
-"""
+"""Modello del campo di vento 2D con dinamiche temporali e spaziali."""
 
 import numpy as np
 from typing import Optional
 
 class WindField:
-    """Gestisce la simulazione stocastica del campo di vento.
-
-    Il vento è composto da un vettore base globale e da fluttuazioni locali
-    gestite tramite una griglia spaziale interpolata bilinearmente.
-
-    Args:
-        field_size: Dimensione del campo di regata in metri.
-        grid_n: Numero di celle per lato della griglia di perturbazione.
-        base_speed_range: Intervallo (min, max) per la velocità base in nodi.
-        temporal_drift_dir: Massima variazione di direzione base per step (rad).
-        temporal_drift_speed: Massima variazione di velocità base per step (nodi).
-        spatial_std_dir: Deviazione standard delle perturbazioni della direzione (rad).
-        spatial_std_speed: Deviazione standard delle perturbazioni della velocità (nodi).
-        spatial_corr: Coefficiente di persistenza spaziale (mean-reversion).
-    """
+    """Gestisce la simulazione stocastica del campo di vento tramite griglia spaziale."""
 
     def __init__(
         self,
@@ -53,12 +33,7 @@ class WindField:
         self._rng = np.random.default_rng()
 
     def reset(self, np_random, base_direction: Optional[float] = None) -> None:
-        """Inizializza o reimposta il campo di vento.
-
-        Args:
-            np_random: Generatore di numeri casuali (condiviso con l'ambiente).
-            base_direction: Direzione base iniziale in radianti. Se assente, è casuale.
-        """
+        """Inizializza o reimposta il campo di vento."""
         self._rng = np_random
 
         self.base_speed = float(np_random.uniform(*self.base_speed_range))
@@ -76,14 +51,12 @@ class WindField:
         ).astype(np.float32)
 
     def step(self) -> None:
-        """Avanza la simulazione del vento di un passo temporale.
-
-        Aggiorna il vento base tramite random walk e le perturbazioni locali
-        tramite un processo mean-reverting verso lo zero.
-        """
+        """Avanza la simulazione del vento di un passo temporale."""
         rng = self._rng
 
-        # Base Wind Evolution
+        # --- Random Walk del Vento Base ---
+        # La direzione e velocità "di base" del vento variano nel tempo in modo continuo ma stocastico 
+        # (Random Walk), creando i tipici "salti di vento" (shifts) che rendono la regata tattica.
         self.base_direction += float(
             rng.uniform(-self.temporal_drift_dir, self.temporal_drift_dir)
         )
@@ -96,6 +69,10 @@ class WindField:
             np.clip(self.base_speed, 15.0, self.base_speed_range[1])
         )
 
+        # --- Raffiche Locali (Processo Mean-Reverting) ---
+        # Per simulare raffiche di vento localizzate nello spazio, la griglia applica un rumore gaussiano 
+        # e poi lo attenua nel tempo (spatial_corr). Questo fa sì che le raffiche nascano, vivano 
+        # per qualche secondo in un'area, e poi si smorzino spontaneamente (Mean Reversion).
         noise_dir = rng.normal(0, self.spatial_std_dir * 0.1, (self.grid_n, self.grid_n))
         noise_speed = rng.normal(0, self.spatial_std_speed * 0.1, (self.grid_n, self.grid_n))
 
@@ -110,20 +87,7 @@ class WindField:
         )
 
     def get_local_wind(self, x: float, y: float) -> tuple[float, float]:
-        """Calcola la direzione e la velocità del vento in una posizione specifica.
-
-        Esegue un'interpolazione bilineare basata sui valori dei nodi della griglia
-        circostanti la posizione (x, y).
-
-        Args:
-            x: Coordinata X.
-            y: Coordinata Y.
-
-        Returns:
-            Una tupla (direzione, velocità) dove:
-                - direzione: Angolo in radianti [0, 2π).
-                - velocità: Intensità in nodi [15, 30].
-        """
+        """Calcola la direzione e la velocità del vento locale tramite interpolazione bilineare."""
         n = self.grid_n
 
         gx = float(np.clip(x / self.field_size * (n - 1), 0, n - 1 - 1e-9))
@@ -152,16 +116,7 @@ class WindField:
         return float(direction), speed
 
     def get_grid_arrows(self, n_arrows: int = 8) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Genera i vettori del vento per la visualizzazione grafica.
-
-        Args:
-            n_arrows: Numero di frecce per lato da visualizzare.
-
-        Returns:
-            Una tupla con quattro array numpy (xs, ys, us, vs):
-                - xs, ys: Coordinate dei centri delle frecce.
-                - us, vs: Componenti orizzontale e verticale del vettore velocità.
-        """
+        """Genera i vettori del vento per la visualizzazione grafica."""
         step = self.field_size / n_arrows
         xs, ys = np.meshgrid(
             np.arange(step / 2, self.field_size, step),
