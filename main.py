@@ -180,7 +180,7 @@ if __name__ == "__main__":
         model_path = resolve_model_path(args.model_name, create_new=False)
         print(f"\n[Sistema] Target Modello Risolto per Test: {model_path}.zip")
         if args.test_multi:
-            print("\nGenerating multi-agent regatta videos...")
+            print("\nGenerazione video...")
             create_multi_video(model_path=model_path)
         else:
             print(f"\nGenerating single multi-agent video: {args.video_file}...")
