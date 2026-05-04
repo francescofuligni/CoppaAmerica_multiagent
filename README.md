@@ -10,11 +10,10 @@ Il software simula una regata tra due imbarcazioni (agenti) che devono navigare 
 
 ### ⚓ Come funziona la Regata
 
-La competizione è strutturata in **3 fasi principali (Leg)** che mettono alla prova diverse capacità di navigazione:
+La competizione è strutturata in **2 fasi principali (Leg)** che mettono alla prova diverse capacità di navigazione:
 
 1.  **Leg 1 (Bolina - Upwind)**: Le barche partono dalla zona inferiore del campo (Y ≈ 0-100m) e devono risalire il vento fino al **Top Gate** (Y = 2300m). Per completare la fase, è obbligatorio attraversare lo spazio compreso tra le due boe del cancello.
-2.  **Leg 2 (Poppa - Downwind)**: Dopo aver girato la boa di bolina, le barche devono scendere velocemente verso il **Bottom Gate** (Y = 200m) con il vento in poppa.
-3.  **Leg 3 (Giro Finale)**: Una volta attraversata la linea di arrivo, le imbarcazioni devono compiere una manovra di rotazione completa attorno alla boa finale per convalidare il successo della regata.
+2.  **Leg 2 (Poppa - Downwind)**: Dopo aver girato la boa di bolina, le barche devono scendere velocemente verso il **Bottom Gate** (Y = 200m). La regata termina immediatamente al corretto attraversamento di questo cancello.
 
 ### ⛵ Competizione e Fisica
 

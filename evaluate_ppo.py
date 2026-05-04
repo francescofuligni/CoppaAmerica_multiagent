@@ -107,8 +107,8 @@ def create_multi_video(
 
     for i in range(1, 6):
         fname = os.path.join(output_dir, f"test_{i}.mp4")
-        print(f"\n--- Test {i}/5: Regata standard ---")
-        create_video(model_path=model_path, filename=fname, seed=42 + i)
+        print(f"\n--- Test {i}/5: Regata standard (Seed casuale) ---")
+        create_video(model_path=model_path, filename=fname, seed=None)
 
     print("\n" + "=" * 70)
     print(f"  5 video salvati in {output_dir}/")

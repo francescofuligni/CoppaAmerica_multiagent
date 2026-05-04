@@ -730,8 +730,6 @@ class ImprovedSailingEnv(ParallelEnv):
                 wrong_course = True
             elif current_leg == 2 and by > self.top_gate_y + 150:
                 wrong_course = True
-            elif current_leg == 3 and by > self.bottom_gate_y + 150:
-                wrong_course = True
 
             if wrong_course:
                 reward -= self.hard_violation_penalty
@@ -808,36 +806,26 @@ class ImprovedSailingEnv(ParallelEnv):
                     crossed_bottom_line = ctx['prev_y'] > self.bottom_gate_y >= by
                     if crossed_bottom_line:
                         if gate_left <= bx <= gate_right:
-                            self.state[agent]['current_leg'] = 3
-                            reward += 500.0 
-                            round_side = -1.0 if bx < self.course_center_x else 1.0
-                            self._start_rounding_segment(agent, segment='bottom_finish', side=round_side)
-                            self._set_rounding_target(agent, gate_left, gate_right, self.bottom_gate_y, round_side, down_offset=40.0)
-                            self.previous_distance[agent] = np.linalg.norm(pos - self.target[agent])
-                            self.best_distance[agent] = self.previous_distance[agent]
+                            # Arrivo immediato al superamento del gate
+                            self.finished_boats += 1
+                            efficiency = max(0, self.max_steps - self.step_count) / self.max_steps
+                            
+                            if self.finished_boats == 1:
+                                reward += 2500.0 + efficiency * 1000.0 # Bonus vittoria accorpato
+                                self.state[agent]['termination_reason'] = 'finished_first'
+                            else:
+                                reward += 700.0
+                                self.state[agent]['termination_reason'] = 'finished_second'
+                            
+                            terminated = True
+                            self.state[agent]['steps_to_target'] = self.step_count
+                            self.state[agent]['current_leg'] = 2 
                         else:
                             # Passaggio fuori gate: squalifica immediata
                             reward -= self.hard_violation_penalty
                             terminated = True
                             self.state[agent]['termination_reason'] = 'missed_bottom_gate'
 
-            elif self.state[agent]['current_leg'] == 3:
-                if self.state[agent].get('post_round_pending', False):
-                    if dist_to_target <= max(self.target_radius * 1.2, 60.0):
-                        self.finished_boats += 1
-                        efficiency = max(0, self.max_steps - self.step_count) / self.max_steps
-                        if self.finished_boats == 1:
-                            reward += 2000.0 + efficiency * 1000.0
-                            self.state[agent]['termination_reason'] = 'finished_first'
-                        else:
-                            reward += 200.0
-                            self.state[agent]['termination_reason'] = 'finished_second'
-                        terminated = True
-                        self.state[agent]['steps_to_target'] = self.step_count
-                        self.state[agent]['post_round_pending'] = False
-                        self.state[agent]['rounding_segment'] = None
-                        self.state[agent]['rounding_steps'] = 0
-                        self.state[agent]['rounding_retries'] = 0
 
         if not terminated:
             # Protezione rounding: penalita' crescente + retry + hard-fail dedicato.
@@ -858,7 +846,7 @@ class ImprovedSailingEnv(ParallelEnv):
                     reward += progress * 200.0
 
             # Giro su se stessa + progresso scarso/negativo: hard-fail.
-            if self.state[agent]['current_leg'] != 3:
+            if True: # Rimosso check leg 3
                 turn_sum = float(np.sum(self.state[agent].get('spin_turn_window', [])))
                 prog_sum = float(np.sum(self.state[agent].get('spin_progress_window', [])))
                 if len(self.state[agent].get('spin_turn_window', [])) >= self.spin_window_len and turn_sum >= self.spin_turn_threshold and prog_sum <= self.spin_min_progress:
