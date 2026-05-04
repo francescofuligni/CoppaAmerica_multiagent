@@ -88,4 +88,4 @@ python -m tensorboard.main --logdir ./sailing_tensorboard/
 ```
 
 ---
-> **Nota**: I parametri di configurazione (velocità del vento, iperparametri RL, dimensioni del campo) sono modificabili centralmente nel file `config.yaml`.
+> **Nota**: Tutti i parametri di simulazione e gli iperparametri RL sono configurabili centralmente nel file `config.yaml`.
