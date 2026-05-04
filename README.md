@@ -18,14 +18,27 @@ La competizione è strutturata in **3 fasi principali (Leg)** che mettono alla p
 
 ### ⛵ Competizione e Fisica
 
-Le imbarcazioni non sono semplici icone, ma seguono un modello fisico complesso:
+Le imbarcazioni non sono semplici icone, ma seguono un modello fisico complesso, basato su curve di performance veliche (VPP - Velocity Prediction Program):
 *   **Controlli Continui**: Gli agenti controllano in tempo reale l'**angolo del timone** e il **trim delle vele**.
-*   **Foiling**: Le barche possono "volare" sull'acqua (foiling) raggiungendo velocità elevate. Manovre troppo brusche o angoli di vento errati possono causare la caduta dai foil (*drop foil*), con conseguente perdita di velocità.
+*   **Fisica delle Polari**: Le velocità target vengono calcolate in modo estremamente realistico interrogando curve polari, che definiscono le prestazioni ideali a ogni angolazione e intensità del vento.
+*   **Foiling**: Le barche possono "volare" sull'acqua (foiling) raggiungendo velocità elevate. Manovre troppo brusche o angoli di vento errati possono causare la caduta dai foil (*drop foil*), con conseguente enorme perdita di velocità.
 *   **Regole e Penalità**: Per incoraggiare un comportamento realistico, il sistema applica penalità severe per:
-    *   **Collisioni**: Contatto fisico tra le imbarcazioni.
+    *   **Collisioni**: Contatto fisico tra le imbarcazioni (tenendo conto del diritto di rotta sulle mure opposte).
     *   **Fuori Campo**: Uscita dai confini laterali o verticali del campo di gara.
     *   **Missed Gate**: Mancato passaggio all'interno dei cancelli obbligatori.
 *   **Apprendimento**: Attraverso il *Self-Play*, le barche imparano non solo a navigare, ma anche a reagire alla posizione dell'avversario per ottenere vantaggi tattici.
+
+---
+
+## 📂 Struttura del Progetto
+
+Il codice è profondamente modulare e separato in comparti logici ben definiti:
+
+- `core/`: Contiene la simulazione fisica cruda. Qui si trova il modello del vento (`wind_model.py`), la dinamica della barca con le curve polari (`boat_physics.py`) e l'ottimizzazione aerodinamica (`sail_trim.py`).
+- `env/`: Definisce l'ambiente Multi-Agent in stile Gymnasium. Il cuore del simulatore (`sailing_env.py`) gestisce cinematica, collisioni, e il calcolo dettagliato delle ricompense RL. Include i moduli grafici in `rendering.py`.
+- `train_ppo.py` e `evaluate_ppo.py`: Contengono le implementazioni dirette per l'avvio degli allenamenti (tramite Stable-Baselines3) e la validazione del modello addestrato.
+- `main.py`: Una comoda interfaccia a linea di comando (CLI) che orchestra l'avvio coordinato di training, test e rendering video in base ai parametri richiesti.
+- `callbacks.py`: Monitoraggio personalizzato per i log in TensorBoard durante il training (statistiche su completamenti, velocità media, ecc.).
 
 ---
 
@@ -69,13 +82,10 @@ python main.py --video-file videos/demo.mp4
 python main.py --test-multi
 ```
 
-### 📊 Monitoraggio e Debug
+### 📊 Monitoraggio
 ```bash
 # Visualizza le curve di apprendimento su TensorBoard
 python -m tensorboard.main --logdir ./sailing_tensorboard/
-
-# Esegui la suite di test unitari
-python -m unittest discover -s tests -p "test_*.py"
 ```
 
 ---
