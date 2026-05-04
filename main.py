@@ -11,7 +11,6 @@ import glob
 import re
 import yaml
 
-# Silenzia falsi allarmi noti delle dipendenze vettoriali di SB3/Supersuit
 warnings.filterwarnings(
     "ignore", category=UserWarning, module="stable_baselines3.common.vec_env.base_vec_env"
 )
@@ -21,7 +20,6 @@ warnings.filterwarnings(
 warnings.filterwarnings("ignore", category=UserWarning, module="stable_baselines3")
 from stable_baselines3 import PPO
 
-# Moduli locali
 from train_ppo import train_model
 from evaluate_ppo import create_video, create_multi_video
 from env.sailing_env import ImprovedSailingEnv
@@ -50,7 +48,6 @@ def resolve_model_path(base_name: str, create_new: bool) -> str:
         suffix = f"_{next_ver}" if next_ver > 1 else ""
         return os.path.join("models", f"{base_name}{suffix}")
     else:
-        # Se non esiste neanche l'1, usiamo la stringa base
         if max_version == 0:
             return os.path.join("models", base_name)
         suffix = f"_{max_version}" if max_version > 1 else ""
@@ -148,11 +145,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.train_new or args.train_resume:
-        # In fase di training decidiamo il path dinamico
         model_path = resolve_model_path(args.model_name, create_new=args.train_new)
         print(f"\n[Sistema] Target Modello Risolto: {model_path}.zip")
 
-        # Gestione compatibilità
         if not args.train_new:
             model_ready = is_model_compatible(model_path)
             if not model_ready:
@@ -182,7 +177,6 @@ if __name__ == "__main__":
             else:
                 create_video(model_path=model_path, filename=args.video_file)
     else:
-        # Modalità Test (nessun flag di training)
         model_path = resolve_model_path(args.model_name, create_new=False)
         print(f"\n[Sistema] Target Modello Risolto per Test: {model_path}.zip")
         if args.test_multi:

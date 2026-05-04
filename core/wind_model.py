@@ -46,7 +46,6 @@ class WindField:
         self.spatial_std_speed = spatial_std_speed
         self.spatial_corr = spatial_corr
 
-        # Stato interno
         self.base_direction: float = 0.0
         self.base_speed: float = float(np.mean(base_speed_range))
         self._delta_dir: np.ndarray = np.zeros((grid_n, grid_n))
@@ -69,7 +68,6 @@ class WindField:
         else:
             self.base_direction = float(np_random.uniform(0, 2 * np.pi))
 
-        # Inizializzazione perturbazioni spaziali (distribuzione normale)
         self._delta_dir = np_random.normal(
             0.0, self.spatial_std_dir, (self.grid_n, self.grid_n)
         ).astype(np.float32)
@@ -85,7 +83,7 @@ class WindField:
         """
         rng = self._rng
 
-        # Evoluzione del vento base
+        # Base Wind Evolution
         self.base_direction += float(
             rng.uniform(-self.temporal_drift_dir, self.temporal_drift_dir)
         )
@@ -98,14 +96,12 @@ class WindField:
             np.clip(self.base_speed, 15.0, self.base_speed_range[1])
         )
 
-        # Evoluzione delle perturbazioni locali
         noise_dir = rng.normal(0, self.spatial_std_dir * 0.1, (self.grid_n, self.grid_n))
         noise_speed = rng.normal(0, self.spatial_std_speed * 0.1, (self.grid_n, self.grid_n))
 
         self._delta_dir = (self.spatial_corr * self._delta_dir + noise_dir).astype(np.float32)
         self._delta_speed = (self.spatial_corr * self._delta_speed + noise_speed).astype(np.float32)
 
-        # Taglio dei valori estremi (clamping)
         self._delta_dir = np.clip(
             self._delta_dir, -self.spatial_std_dir * 2.5, self.spatial_std_dir * 2.5
         )
@@ -130,14 +126,12 @@ class WindField:
         """
         n = self.grid_n
 
-        # Calcolo indici normalizzati sulla griglia
         gx = float(np.clip(x / self.field_size * (n - 1), 0, n - 1 - 1e-9))
         gy = float(np.clip(y / self.field_size * (n - 1), 0, n - 1 - 1e-9))
 
         ix, iy = int(gx), int(gy)
         fx, fy = gx - ix, gy - iy
 
-        # Interpolazione bilineare della perturbazione di direzione
         local_delta_dir = (
             self._delta_dir[ix, iy]     * (1 - fx) * (1 - fy)
             + self._delta_dir[ix + 1, iy]   * fx       * (1 - fy)
@@ -145,7 +139,6 @@ class WindField:
             + self._delta_dir[ix + 1, iy + 1] * fx     * fy
         )
 
-        # Interpolazione bilineare della perturbazione di velocità
         local_delta_speed = (
             self._delta_speed[ix, iy]     * (1 - fx) * (1 - fy)
             + self._delta_speed[ix + 1, iy]   * fx       * (1 - fy)

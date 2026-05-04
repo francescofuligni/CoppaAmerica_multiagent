@@ -32,7 +32,6 @@ def create_video(
         config = {}
     train_cfg = config.get("training", {})
 
-    # Carica modello
     model = PPO.load(model_path, device="cpu")
 
     raw_env = ImprovedSailingEnv(render_mode="rgb_array")
@@ -52,8 +51,6 @@ def create_video(
     raw_env.reset = custom_reset
 
     n_stack = train_cfg.get("frame_stack", 4)
-    # Applichiamo il frame stacking a livello di PettingZoo ParallelEnv
-    # Questo mantiene la compatibilità con l'input della rete neurale [n_stack * 20]
     raw_env = ss.frame_stack_v1(raw_env, n_stack)
 
     observations, infos = raw_env.reset()
@@ -66,7 +63,6 @@ def create_video(
     step = 0
     while step < raw_env.unwrapped.max_steps:
         actions = {}
-        # Predici le azioni per ogni agente ancora attivo
         for agent in raw_env.agents:
             obs = observations[agent]
             action, _ = model.predict(obs, deterministic=True)
@@ -83,11 +79,10 @@ def create_video(
         
         step += 1
 
-        # Interrompi solo quando TUTTE le barche hanno finito (o sono state rimosse per timeout/fallimento)
+        # Interrompi solo quando le barche hanno finito (o sono state rimosse per timeout/fallimento)
         if all(terminations[a] or truncations[a] for a in terminations):
             break
 
-    # Salva il video
     print(f"\nSaving video to {filename} ({len(frames)} frames)...")
     try:
         imageio.mimsave(filename, frames, fps=15)

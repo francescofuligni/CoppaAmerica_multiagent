@@ -5,7 +5,6 @@ from stable_baselines3.common.callbacks import CallbackList
 import supersuit as ss
 import yaml
 
-# Importazioni Locali
 from env.sailing_env import ImprovedSailingEnv
 from callbacks import SuccessTrackingCallback, RollingCheckpointCallback
 
@@ -22,7 +21,6 @@ def train_model(
     n_envs: Numero di ambienti da eseguire in parallelo.
     """
 
-    # Caricamento Configurazione YAML
     try:
         with open("config.yaml", "r") as f:
             config = yaml.safe_load(f)
@@ -37,20 +35,17 @@ def train_model(
     print(f"🛥️  SAILING RL - TRAINING (Parallel Envs: {n_envs})")
     print("=" * 70)
 
-    # 1. Creazione Ambiente Vettorizzato (Parallelismo)
+    # Creazione Ambiente Vettorizzato
     print(f"1. Creating {n_envs} parallel environments (PettingZoo via SuperSuit)...")
 
     env = ImprovedSailingEnv()
     agents_per_env = len(env.possible_agents)
 
-    # Adatta l'ambiente PettingZoo a VecEnv Standard di SB3
-    # Aggiungi black_death per permettere la rimozione di agenti in
-    # diversi step
+    # Aggiungi black_death per permettere la rimozione di agenti in diversi step
     env = ss.black_death_v3(env)
     env = ss.pettingzoo_env_to_vec_env_v1(env)
 
-    # Parallelizza l'ambiente (usa num_cpus=0 per evitare bug noti tra le
-    # ultime versioni di supersuit e SB3)
+    # Parallelizza l'ambiente
     env = ss.concat_vec_envs_v1(
         env, num_vec_envs=n_envs, num_cpus=0, base_class="stable_baselines3"
     )
@@ -60,7 +55,6 @@ def train_model(
     n_stack = train_cfg.get("frame_stack", 4)
     train_env = VecFrameStack(train_env, n_stack=n_stack)
 
-    # 2. Creazione/Caricamento del Modello PPO
     rollout_steps_per_env = train_cfg.get("n_steps", 256)
 
     if os.path.exists(model_path + ".zip"):
@@ -93,8 +87,6 @@ def train_model(
         print("   -> Piazza pulita dei vecchi checkpoint completata.")
 
         net_arch = train_cfg.get("net_arch", [256, 256])
-        # Support both old list format and new SB3 dict format if needed, 
-        # but here we follow the dynamics optimization branch style
         model = PPO(
             "MlpPolicy",
             train_env,
@@ -112,7 +104,7 @@ def train_model(
             tensorboard_log="./sailing_tensorboard/",
         )
 
-    # 3. Setup Callback
+    # Setup Callback
     callback_check_freq = max(1, 10000 // max(1, n_envs * agents_per_env))
     success_callback = SuccessTrackingCallback(
         verbose=1,
@@ -132,9 +124,8 @@ def train_model(
 
     callback = CallbackList([success_callback, checkpoint_callback])
 
-    # 4. Avvio Training
+    # Avvio Training
     print(f"\n4. Training for {total_timesteps} steps...")
-    # Train in large chunks and stop only when callback reaches success threshold.
     if chunk_timesteps is None:
         chunk_timesteps = max(total_timesteps, 200_000)
 
@@ -170,8 +161,8 @@ def train_model(
                 "[Training] Training ended (either manually interrupted, crashed, or max_chunks reached)."
             )
 
-        # 5. Salvataggio Modello Sicuro
-        print("\n[Salvataggio Sicuro] Salvataggio del modello in corso...")
+        # Salvataggio Modello
+        print("\n[Salvataggio] Salvataggio del modello in corso...")
         model.save(model_path)
         print(f"Model saved successfully as '{model_path}'")
 

@@ -14,7 +14,7 @@ class SailingRenderer:
         if self.fig is None or self.ax is None:
             self.fig, self.ax = plt.subplots(figsize=(8,8))
 
-        self.fig.clf() # Fully clear the figure to avoid frame overlapping
+        self.fig.clf()
         self.ax = self.fig.add_subplot(111)
         self.ax.set_xlim(0, self.env.field_width)
         self.ax.set_ylim(0, self.env.field_length)

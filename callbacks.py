@@ -56,12 +56,11 @@ class SuccessTrackingCallback(BaseCallback):
         self.stop_on_perfect_window = stop_on_perfect_window
         self.goal_reached = False
 
-        # Dati: agent -> lista successi e distanze
-        self.episode_successes = {}  # dict[agent] = lista successi
-        self.episode_distances = {}  # dict[agent] = lista distanze
-        self.n_episodes = {}  # dict[agent] = totale episodi
+        self.episode_successes = {}  
+        self.episode_distances = {}  
+        self.n_episodes = {}  
 
-        # Metriche continue (rolling window)
+        # Metriche continue 
         self.trim_eff_window = {}
         self.trim_error_window = {}
         self.vmg_window = {}
@@ -129,7 +128,6 @@ class SuccessTrackingCallback(BaseCallback):
                 float(agent_info["rounding_penalty"]),
             )
 
-        # Conta episodio solo in evento finale.
         is_terminal = bool(
             agent_info.get("terminated", False) or agent_info.get("truncated", False)
         )
@@ -150,7 +148,7 @@ class SuccessTrackingCallback(BaseCallback):
             self.termination_reason_counts[agent].get(reason, 0) + 1
         )
 
-        # Mantieni solo ultime N ep (N = max finestra metriche e finestra obiettivo)
+        # Mantieni solo ultime N ep
         keep_n = max(100, self.success_window)
         if len(self.episode_successes[agent]) > keep_n:
             self.episode_successes[agent].pop(0)
@@ -177,20 +175,16 @@ class SuccessTrackingCallback(BaseCallback):
         return True
 
     def _on_step(self) -> bool:
-        # In vectorized envs, self.locals['infos'] è una lista con un dict per ambiente
         infos = self.locals.get("infos", [])
 
         for env_info in infos:
             if not isinstance(env_info, dict):
                 continue
 
-            # Formato appiattito (VecEnv after PettingZoo conversion): singolo agent_info.
             if "distance_to_target" in env_info:
                 agent = str(env_info.get("agent", "agent_0"))
                 self._consume_agent_info(agent, env_info)
                 continue
-
-            # Formato nidificato: {agent_name: agent_info}
             for agent, agent_info in env_info.items():
                 if not isinstance(agent_info, dict):
                     continue
@@ -214,7 +208,6 @@ class SuccessTrackingCallback(BaseCallback):
                 print("=" * 70 + "\n")
             return False
 
-        # Stampa periodica
         if self.n_calls > 0 and self.n_calls % self.check_freq == 0:
             print(f"\n{'='*70}")
             print(f"📊 Progress at {self.n_calls:,} steps")

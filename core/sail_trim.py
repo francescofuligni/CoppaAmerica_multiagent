@@ -1,9 +1,9 @@
-"""Modello per la regolazione delle vele in funzione del True Wind Angle (TWA).
+"""Model for sail trim based on True Wind Angle (TWA).
 
-Il modello gestisce la conversione tra le azioni della policy e i livelli di trim reali,
-calcolando l'efficienza basata sullo scostamento dal valore ottimale.
+The model handles the conversion between policy actions and actual trim levels,
+calculating efficiency based on the deviation from the optimal value.
 
-Convenzioni:
+Conventions:
     - Livello di trim: [0, 1] (0 = vele molto lasche, 1 = vele molto cazzate).
     - Azione policy: [-1, 1] (mappata linearmente sul livello di trim).
 """
@@ -71,7 +71,6 @@ def trim_efficiency(trim_value: float, optimal_trim: float, is_foiling: bool) ->
     """
     error = abs(float(trim_value) - float(optimal_trim))
     sigma = 0.12 if is_foiling else 0.16
-    # Curva gaussiana: 1.0 centro, decrescita dolce lontano dall'ottimo.
     eff = np.exp(-0.5 * (error / sigma) ** 2)
     return float(np.clip(eff, 0.0, 1.0))
 
@@ -87,9 +86,7 @@ def trim_speed_multiplier(efficiency: float, is_foiling: bool) -> float:
         Moltiplicatore applicato alla velocità base della polare.
     """
     if is_foiling:
-        # Foiling: premio forte all'allineamento perfetto, decadimento netto se fuori trim.
         return float(0.60 + 0.65 * efficiency)
-    # Displacement: effetto leggermente meno estremo.
     return float(0.72 + 0.42 * efficiency)
 
 

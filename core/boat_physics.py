@@ -64,24 +64,22 @@ def compute_polar_speed(
             - optimal_trim: Trim ottimale per l'andatura corrente.
             - angle_deg: Angolo del vento in gradi (normalizzato).
     """
-    # NOTA: apparent_wind_angle è in realtà il True Wind Angle (TWA)!
+    # NOTE: AWA is TWA
     angle_deg = normalize_twa_deg(apparent_wind_angle)
         
     if is_foiling:
-        # Logica Foiling (tipo AC75): decollo dai 45-50° (bolina larga/traverso).
         if angle_deg < 45: speed_ratio = 0.0
         elif angle_deg < 55: speed_ratio = 1.0 + (angle_deg - 45) * 0.15
         elif angle_deg < 100: speed_ratio = 2.5 + (angle_deg - 55) * 0.024
         elif angle_deg < 140: speed_ratio = 3.6 + (angle_deg - 100) * 0.015
-        elif angle_deg < 170: speed_ratio = 4.2 - (angle_deg - 140) * 0.03  # Veloci in poppa fino a 170°.
-        else: speed_ratio = 3.3 - (angle_deg - 170) * 0.25 # Stallo brusco oltre 170° per l'ombra aerodinamica.
+        elif angle_deg < 170: speed_ratio = 4.2 - (angle_deg - 140) * 0.03
+        else: speed_ratio = 3.3 - (angle_deg - 170) * 0.25
     else:
-        # Logica Dislocante: andatura classica, molto più lenta del foiling.
         if angle_deg < 35: speed_ratio = 0.0
         elif angle_deg < 50: speed_ratio = 0.3 + (angle_deg - 35) * 0.03
         elif angle_deg < 110: speed_ratio = 0.75 + (angle_deg - 50) * 0.015
         elif angle_deg < 140: speed_ratio = 1.65 - (angle_deg - 110) * 0.01
-        else: speed_ratio = 1.35 - (angle_deg - 140) * 0.005 # Nessuno stallo brusco a 180° in acqua.
+        else: speed_ratio = 1.35 - (angle_deg - 140) * 0.005
         
     base_speed = min(speed_ratio * wind_speed, max_speed)
     optimal_trim = optimal_trim_for_twa(angle_deg, is_foiling)
